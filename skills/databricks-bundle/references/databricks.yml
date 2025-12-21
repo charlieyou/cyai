@@ -1,0 +1,55 @@
+# Example databricks.yml with common patterns
+
+bundle:
+  name: my_project
+
+variables:
+  cluster_id:
+    description: Cluster to run jobs on
+  env:
+    default: dev
+
+resources:
+  jobs:
+    etl_job:
+      name: "ETL Job - ${var.env}"
+      tasks:
+        - task_key: extract
+          notebook_task:
+            notebook_path: ./notebooks/extract.py
+          existing_cluster_id: ${var.cluster_id}
+        - task_key: transform
+          depends_on:
+            - task_key: extract
+          notebook_task:
+            notebook_path: ./notebooks/transform.py
+          existing_cluster_id: ${var.cluster_id}
+
+  pipelines:
+    sales_pipeline:
+      name: "Sales DLT Pipeline"
+      target: sales_lakehouse
+      libraries:
+        - notebook:
+            path: ./pipelines/bronze.py
+        - notebook:
+            path: ./pipelines/silver.py
+      clusters:
+        - label: default
+          num_workers: 2
+
+targets:
+  dev:
+    default: true
+    workspace:
+      host: https://dev.cloud.databricks.com
+    variables:
+      cluster_id: 0123-dev-cluster
+      env: dev
+
+  prod:
+    workspace:
+      host: https://prod.cloud.databricks.com
+    variables:
+      cluster_id: 0456-prod-cluster
+      env: prod
