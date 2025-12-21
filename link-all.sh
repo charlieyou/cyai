@@ -13,6 +13,21 @@ CODEX_PROMPTS="$HOME/.codex/prompts"
 
 mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"
 
+# Clean up stale symlinks (pointing to this repo but target no longer exists)
+cleaned=()
+for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"; do
+    for link in "$dir"/*; do
+        [[ ! -L "$link" ]] && continue
+        target="$(readlink "$link")"
+        # Only clean symlinks pointing to this repo
+        if [[ "$target" == "$SCRIPT_DIR"/* ]] && [[ ! -e "$link" ]]; then
+            rm "$link"
+            cleaned+=("$(basename "$link")")
+        fi
+    done
+done
+[[ ${#cleaned[@]} -gt 0 ]] && echo "Cleaned ${#cleaned[@]} stale symlinks: ${cleaned[*]}"
+
 # Link skills (directories)
 skills=()
 for skill_dir in "$SCRIPT_DIR"/skills/*/; do
@@ -22,7 +37,13 @@ for skill_dir in "$SCRIPT_DIR"/skills/*/; do
 
     for target in "$CLAUDE_SKILLS/$skill_name" "$CODEX_SKILLS/$skill_name"; do
         if [[ -L "$target" ]]; then
-            rm "$target"
+            # Only remove if it points to this repo
+            if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+                rm "$target"
+            else
+                echo "Warning: $target is a symlink to another location, skipping"
+                continue 2
+            fi
         elif [[ -e "$target" ]]; then
             echo "Warning: $target exists and is not a symlink, skipping"
             continue 2
@@ -40,7 +61,13 @@ for cmd_file in "$SCRIPT_DIR"/commands/*.md; do
 
     for target in "$CLAUDE_COMMANDS/$cmd_name" "$CODEX_PROMPTS/$cmd_name"; do
         if [[ -L "$target" ]]; then
-            rm "$target"
+            # Only remove if it points to this repo
+            if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+                rm "$target"
+            else
+                echo "Warning: $target is a symlink to another location, skipping"
+                continue 2
+            fi
         elif [[ -e "$target" ]]; then
             echo "Warning: $target exists and is not a symlink, skipping"
             continue 2
