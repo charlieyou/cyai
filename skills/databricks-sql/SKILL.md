@@ -6,6 +6,8 @@ description: |
   (2) Explore table data or run analytics
   (3) Execute DDL/DML statements
   Triggers: "run sql", "query databricks", "select from", "databricks sql", "execute query"
+compatibility: |
+  Python 3.10+, databricks-sdk package, ~/.databrickscfg with host and sql_warehouse_id
 ---
 
 # Databricks SQL Query Execution
@@ -36,13 +38,13 @@ SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/databricks-sql"
 # If using Claude Code, replace with: ~/.claude/skills/databricks-sql
 
 # Run query (saves to /tmp/query_result.csv)
-python "$SKILL_DIR/references/query.py" "SELECT * FROM catalog.schema.table LIMIT 100"
+python "$SKILL_DIR/scripts/query.py" "SELECT * FROM catalog.schema.table LIMIT 100"
 
 # Custom output filename
-python "$SKILL_DIR/references/query.py" -o users.csv "SELECT * FROM table"
+python "$SKILL_DIR/scripts/query.py" -o users.csv "SELECT * FROM table"
 
 # With profile
-python "$SKILL_DIR/references/query.py" -p dev "SELECT COUNT(*) FROM table"
+python "$SKILL_DIR/scripts/query.py" -p dev "SELECT COUNT(*) FROM table"
 ```
 
 ## Explore Results
@@ -60,5 +62,5 @@ cut -d, -f1,3 /tmp/query_result.csv # Select columns
 
 ## References
 
-- [query.py](references/query.py) - SQL execution script
+- [query.py](scripts/query.py) - SQL execution script
 - [examples.md](references/examples.md) - Common SQL patterns
