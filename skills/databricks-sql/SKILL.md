@@ -16,8 +16,7 @@ Execute SQL queries against Databricks SQL Warehouses. Results saved to `/tmp` a
 
 ## Prerequisites
 
-- Python 3.10+
-- `databricks-sdk`: `pip install databricks-sdk`
+- Python 3.10+ (or `uv` for auto-bootstrapping)
 - `~/.databrickscfg` with `host` and `sql_warehouse_id` (token optional if using other auth)
 
 ## Configuration
@@ -33,18 +32,16 @@ sql_warehouse_id = your-warehouse-id
 ## Usage
 
 ```bash
-# From installed skill dir (Codex by default; adjust for Claude)
-SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/databricks-sql"
-# If using Claude Code, replace with: ~/.claude/skills/databricks-sql
+SKILL_DIR="$HOME/.claude/skills/databricks-sql"
 
-# Run query (saves to /tmp/query_result.csv)
-python "$SKILL_DIR/scripts/query.py" "SELECT * FROM catalog.schema.table LIMIT 100"
+# Run query (auto-bootstraps venv, saves to /tmp/query_result.csv)
+"$SKILL_DIR/scripts/run.sh" "SELECT * FROM catalog.schema.table LIMIT 100"
 
 # Custom output filename
-python "$SKILL_DIR/scripts/query.py" -o users.csv "SELECT * FROM table"
+"$SKILL_DIR/scripts/run.sh" -o users.csv "SELECT * FROM table"
 
 # With profile
-python "$SKILL_DIR/scripts/query.py" -p dev "SELECT COUNT(*) FROM table"
+"$SKILL_DIR/scripts/run.sh" -p dev "SELECT COUNT(*) FROM table"
 ```
 
 ## Explore Results
@@ -62,5 +59,6 @@ cut -d, -f1,3 /tmp/query_result.csv # Select columns
 
 ## References
 
+- [run.sh](scripts/run.sh) - Auto-bootstrapping wrapper (use this)
 - [query.py](scripts/query.py) - SQL execution script
 - [examples.md](references/examples.md) - Common SQL patterns
