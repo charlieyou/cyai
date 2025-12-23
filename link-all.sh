@@ -1,5 +1,5 @@
 #!/bin/bash
-# Symlink skills and commands from ai-configs to .claude and .codex directories
+# Symlink skills and commands from ai-configs to .claude, .codex, and .agents directories
 
 set -e
 
@@ -8,14 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Target directories
 CLAUDE_SKILLS="$HOME/.claude/skills"
 CODEX_SKILLS="$HOME/.codex/skills"
+AGENTS_SKILLS="$HOME/.agents/skills"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
 CODEX_PROMPTS="$HOME/.codex/prompts"
 
-mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"
+mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"
 
 # Clean up stale symlinks (pointing to this repo but target no longer exists)
 cleaned=()
-for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"; do
+for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"; do
     for link in "$dir"/*; do
         [[ ! -L "$link" ]] && continue
         target="$(readlink "$link")"
@@ -35,7 +36,7 @@ for skill_dir in "$SCRIPT_DIR"/skills/*/; do
     skill_name="$(basename "$skill_dir")"
     [[ "$skill_name" == .* ]] && continue
 
-    for target in "$CLAUDE_SKILLS/$skill_name" "$CODEX_SKILLS/$skill_name"; do
+    for target in "$CLAUDE_SKILLS/$skill_name" "$CODEX_SKILLS/$skill_name" "$AGENTS_SKILLS/$skill_name"; do
         if [[ -L "$target" ]]; then
             # Only remove if it points to this repo
             if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
@@ -50,6 +51,13 @@ for skill_dir in "$SCRIPT_DIR"/skills/*/; do
         fi
         ln -s "$skill_dir" "$target"
     done
+
+    # Make scripts executable
+    if [[ -d "$skill_dir/scripts" ]]; then
+        chmod +x "$skill_dir/scripts"/*.sh 2>/dev/null || true
+        chmod +x "$skill_dir/scripts"/*.py 2>/dev/null || true
+    fi
+
     skills+=("$skill_name")
 done
 
