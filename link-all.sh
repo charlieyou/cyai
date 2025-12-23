@@ -55,7 +55,6 @@ for skill_dir in "$SCRIPT_DIR"/skills/*/; do
     # Make scripts executable
     if [[ -d "$skill_dir/scripts" ]]; then
         chmod +x "$skill_dir/scripts"/*.sh 2>/dev/null || true
-        chmod +x "$skill_dir/scripts"/*.py 2>/dev/null || true
     fi
 
     skills+=("$skill_name")
