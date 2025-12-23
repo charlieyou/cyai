@@ -32,7 +32,10 @@ sql_warehouse_id = your-warehouse-id
 ## Usage
 
 ```bash
+# Claude Code
 SKILL_DIR="$HOME/.claude/skills/databricks-sql"
+# Codex
+SKILL_DIR="${CODEX_HOME:-$HOME/.codex}/skills/databricks-sql"
 
 # Run query (auto-bootstraps venv, saves to /tmp/query_result.csv)
 "$SKILL_DIR/scripts/run.sh" "SELECT * FROM catalog.schema.table LIMIT 100"
