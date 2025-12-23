@@ -145,7 +145,12 @@ def execute_sql(sql_query: str, config: WorkspaceConfig, timeout: str = "50s") -
         return QueryResult(columns=columns, rows=rows)
 
     elif response.status and response.status.state in (StatementState.PENDING, StatementState.RUNNING):
-        raise RuntimeError(f"Query timed out after {timeout}")
+        statement_id = response.statement_id or "unknown"
+        raise RuntimeError(
+            f"Query timed out after {timeout}. Statement ID: {statement_id}\n"
+            f"DO NOT RETRY - query continues running on warehouse.\n"
+            f"Monitor with: python monitor_query.py {statement_id}"
+        )
 
     elif response.status:
         error = response.status.error.message if response.status.error else "Unknown error"
