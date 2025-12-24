@@ -94,8 +94,8 @@ A multi-agent system for processing beads issues in parallel.
 | Layer | Tool | Purpose |
 |-------|------|---------|
 | Issue-level | Beads (`bd`) | Prevents duplicate claims via status updates |
-| File-level | Agent Mail (`mcp__mail__*`) | File reservations prevent edit conflicts |
-| Communication | Agent Mail (`mcp__mail__*`) | Agents message each other about conflicts |
+| File-level | Agent Mail | File reservations prevent edit conflicts |
+| Communication | Agent Mail | Agents message each other about conflicts |
 
 ### How It Works
 
