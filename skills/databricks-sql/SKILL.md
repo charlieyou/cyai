@@ -51,10 +51,9 @@ SKILL_DIR="$HOME/.agents/skills/databricks-sql"
 
 # With profile
 "$SKILL_DIR/scripts/run.sh" -p dev "SELECT COUNT(*) FROM table"
-
-# Custom timeout (default: 50s, range: 5s-50s)
-"$SKILL_DIR/scripts/run.sh" -t 30s "SELECT * FROM table"
 ```
+
+> **Bash timeout:** Use at least 70s when calling run.sh (query timeout is 50s + network overhead).
 
 ## Exploring Results
 
@@ -78,9 +77,9 @@ The query continues executing on the warehouse. Retrying wastes resources and ca
 
 On timeout, the script outputs:
 ```
-Error: Query timed out after 50s. Statement ID: <statement_id>
-DO NOT RETRY - query continues running on warehouse.
-Monitor with: python monitor_query.py <statement_id>
+Error: Query timed out after 50s. DO NOT RETRY - query continues running on warehouse.
+Statement ID: <statement_id>
+Monitor with: ./monitor.sh <statement_id>
 ```
 
 **Agent behavior on timeout:**
@@ -112,7 +111,8 @@ Polls until: `SUCCEEDED`, `FAILED`, `CANCELED`, `CLOSED`, or max polls reached.
 
 **run.sh:**
 - `0` → Query succeeded, CSV written
-- `1` → Error (SQL error, timeout, config error)
+- `1` → Error (SQL error, config error)
+- `2` → Query timed out (still running on warehouse)
 - `3` → Result too large for inline retrieval
 
 **monitor.sh:**
