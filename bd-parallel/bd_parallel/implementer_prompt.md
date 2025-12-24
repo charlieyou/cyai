@@ -33,25 +33,40 @@ mkdir -p "$LOCK_DIR"
 lock_file() {{ echo "$LOCK_DIR/${{1//\//_}}.lock"; }}
 
 try_lock() {{
-    ln -s "$AGENT_ID" "$(lock_file "$1")" 2>/dev/null
+    local lock=$(lock_file "$1")
+    # Check if already locked
+    [ -f "$lock" ] && return 1
+    # Atomic lock using mkdir as mutex (works in sandboxed environments)
+    if mkdir "$lock.d" 2>/dev/null; then
+        # Double-check after acquiring mutex
+        if [ -f "$lock" ]; then
+            rmdir "$lock.d"
+            return 1
+        fi
+        echo "$AGENT_ID" > "$lock"
+        rmdir "$lock.d"
+        return 0
+    fi
+    return 1
 }}
 
 is_locked_by_me() {{
-    [ -L "$(lock_file "$1")" ] && [ "$(readlink "$(lock_file "$1")")" = "$AGENT_ID" ]
+    local lock=$(lock_file "$1")
+    [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ]
 }}
 
 lock_holder() {{
-    readlink "$(lock_file "$1")" 2>/dev/null
+    cat "$(lock_file "$1")" 2>/dev/null
 }}
 
 release_lock() {{
     local lock=$(lock_file "$1")
-    [ -L "$lock" ] && [ "$(readlink "$lock")" = "$AGENT_ID" ] && rm -f "$lock"
+    [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ] && rm -f "$lock"
 }}
 
 release_my_locks() {{
     for lock in "$LOCK_DIR"/*.lock; do
-        [ -L "$lock" ] && [ "$(readlink "$lock")" = "$AGENT_ID" ] && rm -f "$lock"
+        [ -f "$lock" ] && [ "$(cat "$lock" 2>/dev/null)" = "$AGENT_ID" ] && rm -f "$lock"
     done
 }}
 ```

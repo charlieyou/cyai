@@ -4,7 +4,6 @@ bd-parallel: Agent SDK orchestrator for parallel beads issue processing.
 
 Usage:
     bd-parallel run [OPTIONS] [REPO_PATH]
-    bd-parallel logs [OPTIONS]
     bd-parallel clean
 """
 
@@ -32,8 +31,8 @@ from claude_agent_sdk import (
 
 from .filelock import LOCK_DIR, release_all_locks
 
-# Logging directories
-LOG_DIR = Path("/tmp/bd-parallel-logs")
+# JSONL log directory
+JSONL_LOG_DIR = Path("/tmp/bd-parallel-logs/jsonl")
 
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "implementer_prompt.md"
@@ -82,32 +81,92 @@ def log_result(success: bool, message: str):
         print(f"  {Colors.RED}✗ {message}{Colors.RESET}")
 
 
-class AgentLogger:
-    """Per-agent file logger."""
+class JSONLLogger:
+    """Claude Code style JSONL logger for full message logging."""
 
-    def __init__(self, agent_id: str, issue_id: str):
-        LOG_DIR.mkdir(exist_ok=True)
-        self.log_path = LOG_DIR / f"agent-{issue_id}-{agent_id[:8]}.log"
+    def __init__(self, session_id: str, cwd: Path):
+        self.session_id = session_id
+        self.cwd = cwd
+        JSONL_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        self.log_path = JSONL_LOG_DIR / f"{session_id}.jsonl"
         self.file = open(self.log_path, "w")
-        self.issue_id = issue_id
-        self.agent_id = agent_id
+        self.parent_uuid: str | None = None
+        self.message_count = 0
 
-    def log(self, level: str, message: str):
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        self.file.write(f"{timestamp} [{level}] {message}\n")
+    def _write(self, entry: dict[str, Any]):
+        """Write a JSON entry as a line."""
+        self.file.write(json.dumps(entry, default=str) + "\n")
         self.file.flush()
 
-    def info(self, message: str):
-        self.log("INFO", message)
+    def log_message(self, message: Any, message_type: str = "assistant"):
+        """Log a full message from the SDK."""
+        msg_uuid = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat() + "Z"
 
-    def debug(self, message: str):
-        self.log("DEBUG", message)
+        entry: dict[str, Any] = {
+            "parentUuid": self.parent_uuid,
+            "sessionId": self.session_id,
+            "cwd": str(self.cwd),
+            "type": message_type,
+            "uuid": msg_uuid,
+            "timestamp": timestamp,
+        }
 
-    def warning(self, message: str):
-        self.log("WARN", message)
+        # Handle different message types from SDK
+        if isinstance(message, AssistantMessage):
+            content = []
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    content.append({"type": "text", "text": block.text})
+                elif isinstance(block, ToolUseBlock):
+                    content.append({
+                        "type": "tool_use",
+                        "id": getattr(block, "id", f"tool_{self.message_count}"),
+                        "name": block.name,
+                        "input": block.input,  # Full params, not truncated
+                    })
+                elif isinstance(block, ToolResultBlock):
+                    content.append({
+                        "type": "tool_result",
+                        "tool_use_id": getattr(block, "tool_use_id", None),
+                        "content": block.content,
+                    })
+            entry["message"] = {
+                "role": "assistant",
+                "content": content,
+            }
+        elif isinstance(message, ResultMessage):
+            entry["message"] = {
+                "role": "result",
+                "result": message.result,
+            }
+        else:
+            # Raw message
+            entry["message"] = message
 
-    def error(self, message: str):
-        self.log("ERROR", message)
+        self._write(entry)
+        self.parent_uuid = msg_uuid
+        self.message_count += 1
+
+    def log_user_prompt(self, prompt: str):
+        """Log the initial user prompt."""
+        msg_uuid = str(uuid.uuid4())
+        timestamp = datetime.now().isoformat() + "Z"
+
+        entry = {
+            "parentUuid": None,
+            "sessionId": self.session_id,
+            "cwd": str(self.cwd),
+            "type": "user",
+            "uuid": msg_uuid,
+            "timestamp": timestamp,
+            "message": {
+                "role": "user",
+                "content": prompt,
+            },
+        }
+        self._write(entry)
+        self.parent_uuid = msg_uuid
 
     def close(self):
         self.file.close()
@@ -132,16 +191,13 @@ class BdParallelOrchestrator:
         repo_path: Path,
         max_agents: int = 3,
         timeout_minutes: int = 30,
-        verbose: bool = False,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
         self.timeout_seconds = timeout_minutes * 60
-        self.verbose = verbose
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
-        self.agent_loggers: dict[str, AgentLogger] = {}
         self.completed: list[IssueResult] = []
         self.failed_issues: set[str] = set()
 
@@ -154,8 +210,7 @@ class BdParallelOrchestrator:
             cwd=self.repo_path,
         )
         if result.returncode != 0:
-            if self.verbose:
-                log("⚠", f"bd ready failed: {result.stderr}", Colors.YELLOW)
+            log("⚠", f"bd ready failed: {result.stderr}", Colors.YELLOW)
             return []
         try:
             issues = json.loads(result.stdout)
@@ -190,23 +245,23 @@ class BdParallelOrchestrator:
         cleaned = 0
         for lock in LOCK_DIR.glob("*.lock"):
             try:
-                if lock.is_symlink() and os.readlink(lock) == agent_id:
+                if lock.is_file() and lock.read_text().strip() == agent_id:
                     lock.unlink()
                     cleaned += 1
             except OSError:
                 pass
 
-        if cleaned and self.verbose:
+        if cleaned:
             log("🧹", f"Cleaned {cleaned} locks for {agent_id[:8]}", Colors.GRAY, dim=True)
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run bd-implementer agent for a single issue."""
-        agent_id = f"{issue_id}-{uuid.uuid4().hex[:8]}"
+        session_id = str(uuid.uuid4())
+        agent_id = f"{issue_id}-{session_id[:8]}"
         self.agent_ids[issue_id] = agent_id
 
-        agent_logger = AgentLogger(agent_id, issue_id)
-        self.agent_loggers[agent_id] = agent_logger
-        agent_logger.info(f"Starting agent for issue {issue_id}")
+        # JSONL logger for full message logging
+        jsonl_logger = JSONLLogger(session_id, self.repo_path)
 
         prompt = IMPLEMENTER_PROMPT_TEMPLATE.format(
             issue_id=issue_id,
@@ -231,25 +286,23 @@ class BdParallelOrchestrator:
             async with asyncio.timeout(self.timeout_seconds):
                 async with ClaudeSDKClient(options=options) as client:
                     await client.query(prompt)
+                    jsonl_logger.log_user_prompt(prompt)
 
                     async for message in client.receive_response():
-                        # Log messages to agent file
+                        # Log full message to JSONL
+                        jsonl_logger.log_message(message)
+
+                        # Console output
                         if isinstance(message, AssistantMessage):
                             for block in message.content:
                                 if isinstance(block, TextBlock):
-                                    agent_logger.debug(f"Text: {block.text[:200]}")
-                                    if self.verbose:
-                                        print(f"    {Colors.DIM}{block.text[:100]}...{Colors.RESET}")
+                                    text = block.text[:100] + "..." if len(block.text) > 100 else block.text
+                                    print(f"    {Colors.DIM}{text}{Colors.RESET}")
                                 elif isinstance(block, ToolUseBlock):
-                                    agent_logger.info(f"Tool: {block.name}")
-                                    if self.verbose:
-                                        log_tool(block.name, str(block.input)[:50])
-                                elif isinstance(block, ToolResultBlock):
-                                    agent_logger.debug(f"Result: {str(block.content)[:100]}")
+                                    log_tool(block.name, str(block.input)[:50])
 
                         elif isinstance(message, ResultMessage):
                             final_result = message.result or ""
-                            agent_logger.info(f"Result: {final_result}")
 
             # Check if issue was closed
             check = subprocess.run(
@@ -261,34 +314,29 @@ class BdParallelOrchestrator:
             if check.returncode == 0:
                 try:
                     issue_data = json.loads(check.stdout)
-                    if issue_data.get("status") == "closed":
+                    # Handle both list and dict responses
+                    if isinstance(issue_data, list) and issue_data:
+                        issue_data = issue_data[0]
+                    if isinstance(issue_data, dict) and issue_data.get("status") == "closed":
                         success = True
-                        agent_logger.info("Issue closed successfully")
                 except json.JSONDecodeError:
                     pass
 
-            if not success:
-                agent_logger.warning("Issue not closed after agent completion")
-
         except TimeoutError:
-            agent_logger.error(f"Timeout after {self.timeout_seconds}s")
             final_result = f"Timeout after {self.timeout_seconds // 60} minutes"
             self._cleanup_agent_locks(agent_id)
 
         except Exception as e:
-            agent_logger.error(f"Agent error: {e}")
             final_result = str(e)
             self._cleanup_agent_locks(agent_id)
 
         finally:
             duration = asyncio.get_event_loop().time() - start_time
-            agent_logger.info(f"Agent finished in {duration:.1f}s, success={success}")
-            agent_logger.close()
+            jsonl_logger.close()
 
             # Ensure locks are cleaned
             self._cleanup_agent_locks(agent_id)
             self.agent_ids.pop(issue_id, None)
-            self.agent_loggers.pop(agent_id, None)
 
         return IssueResult(
             issue_id=issue_id,
@@ -320,14 +368,14 @@ class BdParallelOrchestrator:
 
         # Setup directories
         LOCK_DIR.mkdir(exist_ok=True)
-        LOG_DIR.mkdir(exist_ok=True)
+        JSONL_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         try:
             while True:
                 # Fill up to max_agents
                 ready = self.get_ready_issues()
 
-                if self.verbose and ready:
+                if ready:
                     log("◌", f"Ready issues: {', '.join(ready)}", Colors.GRAY, dim=True)
 
                 while len(self.active_tasks) < self.max_agents and ready:
@@ -341,8 +389,7 @@ class BdParallelOrchestrator:
                     break
 
                 # Wait for ANY task to complete
-                if self.verbose:
-                    log("◌", f"Waiting for {len(self.active_tasks)} agent(s)...", Colors.GRAY, dim=True)
+                log("◌", f"Waiting for {len(self.active_tasks)} agent(s)...", Colors.GRAY, dim=True)
 
                 done, _ = await asyncio.wait(
                     self.active_tasks.values(),
@@ -379,8 +426,7 @@ class BdParallelOrchestrator:
         finally:
             # Final cleanup
             release_all_locks()
-            if self.verbose:
-                log("🧹", "Released all remaining locks", Colors.GRAY, dim=True)
+            log("🧹", "Released all remaining locks", Colors.GRAY, dim=True)
 
         # Summary
         print()
@@ -430,10 +476,6 @@ def run(
         int,
         typer.Option("--timeout", "-t", help="Timeout per agent in minutes"),
     ] = 30,
-    verbose: Annotated[
-        bool,
-        typer.Option("--verbose", "-v", help="Enable verbose logging"),
-    ] = False,
 ):
     """Run parallel beads issue processing."""
     repo_path = repo_path.resolve()
@@ -446,7 +488,6 @@ def run(
         repo_path=repo_path,
         max_agents=max_agents,
         timeout_minutes=timeout,
-        verbose=verbose,
     )
 
     success_count = asyncio.run(orchestrator.run())
@@ -454,54 +495,8 @@ def run(
 
 
 @app.command()
-def logs(
-    tail: Annotated[
-        int,
-        typer.Option("--tail", "-n", help="Number of lines to show"),
-    ] = 50,
-    agent: Annotated[
-        str | None,
-        typer.Option("--agent", "-a", help="Filter by agent/issue ID"),
-    ] = None,
-    follow: Annotated[
-        bool,
-        typer.Option("--follow", "-f", help="Follow log output"),
-    ] = False,
-):
-    """View agent logs."""
-    if not LOG_DIR.exists():
-        log("○", "No logs found", Colors.GRAY)
-        raise typer.Exit(1)
-
-    log_files = sorted(LOG_DIR.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-    if agent:
-        log_files = [f for f in log_files if agent in f.name]
-
-    if not log_files:
-        log("○", "No matching logs found", Colors.GRAY)
-        raise typer.Exit(1)
-
-    latest = log_files[0]
-    print(f"{Colors.BOLD}=== {latest.name} ==={Colors.RESET}")
-    print()
-
-    lines = latest.read_text().splitlines()
-    for line in lines[-tail:]:
-        # Color based on log level
-        if "[ERROR]" in line:
-            print(f"{Colors.RED}{line}{Colors.RESET}")
-        elif "[WARN]" in line:
-            print(f"{Colors.YELLOW}{line}{Colors.RESET}")
-        elif "[INFO]" in line:
-            print(f"{Colors.CYAN}{line}{Colors.RESET}")
-        else:
-            print(f"{Colors.GRAY}{line}{Colors.RESET}")
-
-
-@app.command()
 def clean():
-    """Clean up locks and logs."""
+    """Clean up locks and JSONL logs."""
     cleaned_locks = 0
     cleaned_logs = 0
 
@@ -513,14 +508,14 @@ def clean():
     if cleaned_locks:
         log("🧹", f"Removed {cleaned_locks} lock files", Colors.GREEN)
 
-    if LOG_DIR.exists():
-        log_count = len(list(LOG_DIR.glob("*.log")))
+    if JSONL_LOG_DIR.exists():
+        log_count = len(list(JSONL_LOG_DIR.glob("*.jsonl")))
         if log_count > 0:
-            if typer.confirm(f"Remove {log_count} log files?"):
-                for log_file in LOG_DIR.glob("*.log"):
+            if typer.confirm(f"Remove {log_count} JSONL log files?"):
+                for log_file in JSONL_LOG_DIR.glob("*.jsonl"):
                     log_file.unlink()
                     cleaned_logs += 1
-                log("🧹", f"Removed {cleaned_logs} log files", Colors.GREEN)
+                log("🧹", f"Removed {cleaned_logs} JSONL log files", Colors.GREEN)
 
 
 @app.command()
@@ -536,7 +531,10 @@ def status():
         if locks:
             log("⚠", f"{len(locks)} active locks", Colors.YELLOW)
             for lock in locks[:5]:
-                holder = os.readlink(lock) if lock.is_symlink() else "unknown"
+                try:
+                    holder = lock.read_text().strip() if lock.is_file() else "unknown"
+                except OSError:
+                    holder = "unknown"
                 print(f"    {Colors.DIM}{lock.stem} → {holder}{Colors.RESET}")
             if len(locks) > 5:
                 print(f"    {Colors.DIM}... and {len(locks) - 5} more{Colors.RESET}")
@@ -545,12 +543,12 @@ def status():
     else:
         log("○", "No active locks", Colors.GRAY)
 
-    # Check logs
-    if LOG_DIR.exists():
-        logs = list(LOG_DIR.glob("*.log"))
-        if logs:
-            log("◐", f"{len(logs)} log files in {LOG_DIR}", Colors.GRAY, dim=True)
-            recent = sorted(logs, key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+    # Check JSONL logs
+    if JSONL_LOG_DIR.exists():
+        jsonl_files = list(JSONL_LOG_DIR.glob("*.jsonl"))
+        if jsonl_files:
+            log("◐", f"{len(jsonl_files)} JSONL logs in {JSONL_LOG_DIR}", Colors.GRAY, dim=True)
+            recent = sorted(jsonl_files, key=lambda p: p.stat().st_mtime, reverse=True)[:3]
             for log_file in recent:
                 mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%H:%M:%S")
                 print(f"    {Colors.DIM}{mtime} {log_file.name}{Colors.RESET}")
