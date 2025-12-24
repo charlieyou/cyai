@@ -108,6 +108,30 @@ for agent_file in "$SCRIPT_DIR"/agents/*.md; do
     agents+=("${agent_name%.md}")
 done
 
+# Link bin scripts
+bins=()
+for bin_file in "$SCRIPT_DIR"/bin/*; do
+    [[ ! -f "$bin_file" ]] && continue
+    bin_name="$(basename "$bin_file")"
+
+    target="$HOME/.local/bin/$bin_name"
+    if [[ -L "$target" ]]; then
+        if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+            rm "$target"
+        else
+            echo "Warning: $target is a symlink to another location, skipping"
+            continue
+        fi
+    elif [[ -e "$target" ]]; then
+        echo "Warning: $target exists and is not a symlink, skipping"
+        continue
+    fi
+    ln -s "$bin_file" "$target"
+    chmod +x "$bin_file"
+    bins+=("$bin_name")
+done
+
 echo "Linked ${#skills[@]} skills: ${skills[*]}"
 echo "Linked ${#commands[@]} commands: ${commands[*]}"
 echo "Linked ${#agents[@]} agents: ${agents[*]}"
+echo "Linked ${#bins[@]} bins: ${bins[*]}"

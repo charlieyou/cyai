@@ -14,8 +14,43 @@ This creates symlinks in:
 - `~/.claude/skills/` and `~/.codex/skills/` for skills
 - `~/.claude/commands/` and `~/.codex/prompts/` for commands
 - `~/.claude/agents/` for subagents
+- `~/.local/bin/` for wrapper scripts
 
 The script is idempotent and can be run multiple times safely.
+
+## Bin Scripts
+
+### `claude` wrapper
+
+A wrapper around the claude CLI that adds MCP server toggle flags:
+
+```bash
+claude              # Normal (uses settings.json)
+claude +mail        # Enable agent-mail MCP server
+claude +mail +foo   # Enable multiple servers
+clauded +mail       # Composable with --dangerously-skip-permissions
+```
+
+**Setup:**
+
+Create `~/.claude/mcp-servers.sh` with your server definitions (not committed):
+
+```bash
+# MCP Server definitions - DO NOT COMMIT (contains secrets)
+
+declare -A SERVERS=(
+  ["mail"]='{"type":"http","url":"http://127.0.0.1:8765/mcp/","headers":{"Authorization":"Bearer YOUR_TOKEN"}}'
+  ["github"]='{"command":"gh-mcp"}'
+)
+
+# Servers enabled by default (empty = none)
+DEFAULT_ENABLED=()
+```
+
+**Behavior:**
+- No toggle flags → runs real claude with settings.json (normal behavior)
+- With toggle flags → uses `--strict-mcp-config` (only specified servers, ignores settings.json)
+- No config file → wrapper passes through to real claude (toggle flags ignored)
 
 ## Skills
 
@@ -130,3 +165,4 @@ The orchestrator loop is entirely deterministic - consider replacing with Python
 - [ ] Deadlock detection (two agents waiting on each other)
 - [ ] Metrics/logging for multi-agent sessions
 - [ ] Graceful shutdown (message all subagents to wrap up)
+- [ ] Refine beads agent setup to not require `--dangerously-skip-permissions` (allowlist specific tools/paths)

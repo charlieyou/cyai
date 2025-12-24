@@ -1,0 +1,97 @@
+#!/bin/bash
+
+# Claude wrapper with MCP server toggle flags
+# Usage: claude +mail              # Enable mail server
+#        claude +mail +github      # Enable multiple
+#        clauded +mail             # With --dangerously-skip-permissions
+#
+# Server definitions are in ~/.claude/mcp-servers.sh (not committed)
+
+# Source server config
+CONFIG_FILE="${CLAUDE_MCP_CONFIG:-$HOME/.claude/mcp-servers.sh}"
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  # No config = no MCP toggle support, just pass through
+  exec /usr/bin/claude "$@"
+fi
+
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+
+# Validate config
+if [[ -z "${SERVERS[*]:-}" ]]; then
+  echo "Error: SERVERS not defined in $CONFIG_FILE" >&2
+  exit 1
+fi
+
+# Track whether any MCP toggle was used
+MCP_TOGGLE_USED=false
+
+# Track enabled/disabled
+declare -A ENABLED
+if [[ ${#DEFAULT_ENABLED[@]} -gt 0 ]]; then
+  for s in "${DEFAULT_ENABLED[@]}"; do ENABLED[$s]=1; done
+fi
+
+# Collect passthrough args
+CLAUDE_ARGS=()
+
+# Parse args - extract +server/-server, pass everything else through
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    +*)
+      ENABLED["${1:1}"]=1
+      MCP_TOGGLE_USED=true
+      shift
+      ;;
+    -[a-zA-Z]*)
+      # Check if it's a -server toggle (exists in SERVERS)
+      maybe_server="${1:1}"
+      if [[ -n "${SERVERS[$maybe_server]:-}" ]]; then
+        unset ENABLED["$maybe_server"]
+        MCP_TOGGLE_USED=true
+        shift
+      else
+        # It's a CLI flag, pass through
+        CLAUDE_ARGS+=("$1")
+        shift
+      fi
+      ;;
+    --)
+      # Stop processing, pass rest through
+      shift
+      CLAUDE_ARGS+=("$@")
+      break
+      ;;
+    *)
+      CLAUDE_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+# If no MCP toggles used, run claude normally (uses settings.json)
+if [[ "$MCP_TOGGLE_USED" == false ]]; then
+  exec /usr/bin/claude "${CLAUDE_ARGS[@]}"
+fi
+
+# Build config JSON
+CONFIG='{"mcpServers":{'
+FIRST=true
+for name in "${!ENABLED[@]}"; do
+  if [[ -n "${SERVERS[$name]:-}" ]]; then
+    $FIRST || CONFIG+=','
+    CONFIG+="\"$name\":${SERVERS[$name]}"
+    FIRST=false
+  else
+    echo "Warning: unknown MCP server '$name'" >&2
+  fi
+done
+CONFIG+='}}'
+
+# Create temp config file
+TMPCONFIG=$(mktemp)
+trap 'rm -f "$TMPCONFIG"' EXIT INT TERM
+echo "$CONFIG" > "$TMPCONFIG"
+
+# Run real claude binary with strict MCP config
+/usr/bin/claude --strict-mcp-config --mcp-config "$TMPCONFIG" "${CLAUDE_ARGS[@]}"
