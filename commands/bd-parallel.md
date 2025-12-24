@@ -6,185 +6,185 @@ description: Continuously process beads issues with parallel subagents. Spawns m
 
 You are a beads worker orchestrator that manages multiple parallel subagents to process issues efficiently.
 
+## CRITICAL: Context Management
+
+**WARNING**: Polling subagents with `TaskOutput(block=false)` causes context explosion!
+Each poll returns the FULL tool history of all running agents. After 3-4 poll cycles,
+your context will be exhausted.
+
+**Solution**: Use blocking waits, not polling. Spawn agents, then wait for each to complete
+one at a time with `TaskOutput(block=true)`. The agent runs in parallel while you wait.
+
 ## Architecture
 
 ```
 You (Orchestrator)
-├── Subagent 1: Working on bd-42 (background)
-├── Subagent 2: Working on bd-43 (background)
-├── Subagent 3: Blocked on bd-44, waiting (background)
-└── Monitoring: inbox, issue status, subagent results
+├── Spawns: 3 subagents in background (parallel execution)
+├── Waits: Blocks on first agent to complete
+├── Handles: Result, spawns replacement, blocks on next
+└── Repeats: Until all work done
 ```
 
 ## Coordination
 
 1. **Issue-level (Beads)**: `bd update --status in_progress` prevents duplicate claims
-2. **File-level (Agent Mail)**: Subagents reserve files before editing
-3. **Communication (Agent Mail)**: Subagents message each other about conflicts
+2. **File-level (Agent Mail)**: Subagents reserve files before editing, release after commit
 
 ## Setup (Once at Start)
 
-1. Register yourself with Agent Mail:
+1. Register with Agent Mail:
    ```
-   mcp__mcp-agent-mail__ensure_project(human_key="<absolute-repo-path>")
-   mcp__mcp-agent-mail__register_agent(project_key, program="claude-code", model="opus", task_description="Beads worker orchestrator")
+   mcp__mcp-agent-mail__ensure_project(human_key="<repo-absolute-path>")
+   mcp__mcp-agent-mail__register_agent(project_key, program="claude-code", model="opus", task_description="Beads orchestrator")
    ```
+   Note your agent name for potential cleanup operations.
 
 2. Determine max parallelism (default: 3 concurrent subagents)
+3. Get the list of ready issues: `bd ready --json`
 
 ## Main Loop
 
-### Step 1: Check Current State
+### Step 1: Spawn Initial Batch
 
-```bash
-bd ready                    # Available issues
-bd list --status in_progress  # Currently being worked
-```
-
-Check inbox for messages from subagents:
-```
-mcp__mcp-agent-mail__fetch_inbox(project_key, agent_name, include_bodies=true)
-```
-
-### Step 2: Check Running Subagents
-
-For each background subagent, check status with `TaskOutput`:
-```
-TaskOutput(task_id="<agent-id>", block=false)
-```
-
-- **Completed**: Handle result (see Step 5)
-- **Still running**: Continue monitoring
-- **Blocked**: Note it, may spawn another worker
-
-### Step 3: Spawn New Subagents
-
-If slots available (running < max) and ready issues exist:
-
-```bash
-bd ready --json
-```
-
-For each issue to start (up to available slots):
+For each ready issue (up to max parallelism):
 
 1. Claim it:
    ```bash
    bd update <issue-id> --status in_progress
    ```
 
-2. Spawn background subagent (pass your agent name so it can announce back):
+2. Spawn background subagent:
    ```
    Task(
      subagent_type="bd-implementer",
-     prompt="Implement issue <issue-id>. The orchestrator's agent name is '<your-agent-name>' - message them after you register to announce your identity. Use `bd show <issue-id>` to read it, implement fully, run quality checks, commit locally, and close with `bd close`.",
+     prompt="Implement issue <issue-id>. Use `bd show <issue-id>` to read it, implement fully, run quality checks, commit locally, and close with `bd close`.",
      run_in_background=true
    )
    ```
 
-3. Track the returned task_id
+3. Store the task_id and issue_id mapping
 
-### Step 4: Wait and Monitor
+### Step 2: Wait for Completions (Sequential Blocking)
 
-Sleep briefly, then loop back to Step 1:
-```bash
-sleep 30
+**IMPORTANT**: Wait for agents ONE AT A TIME using blocking calls.
+This prevents context explosion from accumulating partial progress.
+
+```
+# Wait for first agent to complete (blocks until done)
+TaskOutput(task_id="<first-agent-id>", block=true, timeout=300000)
 ```
 
-During wait, you can:
-- Check inbox for urgent messages
-- Respond to coordination requests from subagents
+When it completes:
+1. Handle the result (success/failure)
+2. If more ready issues exist, spawn a replacement agent
+3. Move to next running agent and block on it
 
-### Step 5: Handle Subagent Results
+### Step 3: Verify and Handle Results
 
-When `TaskOutput` returns a completed result:
+After TaskOutput returns, **explicitly verify** the issue status:
 
-**Success** (issue closed, committed):
-- Log completion
-- Decrement running count
-- Free slot for new issue
+```bash
+bd show <issue-id> --json | jq -r .status
+```
 
-**Blocked** (waiting for file reservation):
-- Keep in running count (subagent is waiting)
-- Or: kill it, mark issue ready, retry later when files free
+**If status is "closed"** → Success:
+- Log completion, increment completed_count
+- Spawn next issue if available
 
-**Failed** (error):
-- **Release orphaned reservations** (critical - prevents blocking other agents):
+**If status is "in_progress"** → Failed:
+- Parse subagent output for their agent name (look for "agent name: <name>" or similar)
+- **Release orphaned reservations** (critical!):
   ```
   mcp__mcp-agent-mail__release_file_reservations(project_key, agent_name="<subagent-name>")
   ```
-  (Use the agent_name you learned from the subagent's identity announcement)
-- Reset issue: `bd update <issue-id> --status ready`
+- Reset: `bd update <issue-id> --status ready`
+- Add issue to `failed_issues` set (don't retry this session)
 - Log failure reason
-- Free slot for new issue
+- Spawn next issue if available (but NOT this one)
 
-### Step 6: Handle Blocked Work Becoming Unblocked
+**If TaskOutput times out** (5 min):
+- The subagent may still be running - do NOT reset the issue
+- Do NOT release their reservations (they may still be working)
+- Log warning, move to next running agent
+- Do not spawn a replacement for this issue
 
-Check inbox for messages like "files now available" or reservation releases.
+**If subagent reports "BLOCKED"**:
+- The subagent already released its reservations
+- Reset: `bd update <issue-id> --status ready`
+- Add to `failed_issues` (will need manual intervention or dependency ordering)
+- Log which files were blocking
 
-If a previously blocked subagent can proceed:
-- It will continue automatically (if still running)
-- Or: respawn it if it was killed
+### Step 4: Continue Until Done
+
+Repeat Step 2-3 for each running agent until:
+- No more running agents AND
+- No more ready issues
 
 ## Exit Conditions
 
 Exit when:
-1. No ready issues AND no in_progress issues AND no blocked issues
-2. All subagents completed
-3. You've been idle for 5+ minutes with no progress
+1. All spawned agents have completed (success or failure)
+2. No more ready issues to spawn
 
-## State Tracking
+## State Tracking (Minimal)
 
-Maintain mental state of:
-- `running_agents`: list of {task_id, issue_id, agent_name, started_at}
-- `blocked_agents`: list of {task_id, issue_id, agent_name, blocked_on}
-- `completed_count`: number of issues finished this session
-- `failed_issues`: list of issue_ids that failed
+Keep only what you need:
+- `project_key`: the Agent Mail project key (for cleanup)
+- `running_tasks`: list of {task_id, issue_id}
+- `completed_count`: number
+- `failed_issues`: set of issue_ids that failed (prevents retry loops)
 
-### Learning Subagent Names
+## Final Cleanup
 
-Subagents announce their identity after registering. Watch for messages in thread "orchestrator":
-```
-mcp__mcp-agent-mail__fetch_inbox(project_key, agent_name, include_bodies=true)
-```
+After all agents complete:
 
-When you see "[bd-42] Worker identity: I am BlueLake, assigned to bd-42":
-- Update running_agents: task_id_1 → agent_name="BlueLake"
+1. **Commit issues.jsonl** (captures all closed issues):
+   ```bash
+   git add .beads/issues.jsonl
+   git commit -m "beads: close completed issues"
+   ```
 
-**This mapping is critical for cleanup on failure.**
-
-## Final Report
-
-When exiting:
-- Total issues completed
-- Issues that failed (and why)
-- Issues still blocked
-- Subagents still running (if any)
+2. **Summarize**:
+   - Total issues completed
+   - Total issues failed
+   - Any issues left in ready state
 
 ## Example Session Flow
 
 ```
 [Start]
 > bd ready shows: bd-42, bd-43, bd-44, bd-45
-> Spawn subagent for bd-42 (background) → task_id_1
-> Spawn subagent for bd-43 (background) → task_id_2
-> Spawn subagent for bd-44 (background) → task_id_3
-> Running: 3/3
+> Claim and spawn bd-42 (background) → task_id_1
+> Claim and spawn bd-43 (background) → task_id_2
+> Claim and spawn bd-44 (background) → task_id_3
+> Running: 3 agents
 
-[30 seconds later]
-> TaskOutput(task_id_1, block=false) → still running
-> TaskOutput(task_id_2, block=false) → completed, success!
-> TaskOutput(task_id_3, block=false) → blocked on files held by task_id_1
-> Running: 2/3 (one completed)
-> Spawn subagent for bd-45 (background) → task_id_4
-> Running: 3/3
+[Block on task_id_1]
+> TaskOutput(task_id_1, block=true) → waits...
+> ... (all 3 agents working in parallel) ...
+> task_id_1 completes! Success.
+> Spawn bd-45 (background) → task_id_4
 
-[30 seconds later]
-> TaskOutput(task_id_1, block=false) → completed, success!
-> TaskOutput(task_id_3, block=false) → no longer blocked, continuing
-> TaskOutput(task_id_4, block=false) → still running
-> Running: 2/3
-> bd ready shows: (empty)
-> No new issues to spawn
+[Block on task_id_2]
+> TaskOutput(task_id_2, block=true) → waits...
+> task_id_2 completes! Success.
+> No more ready issues, don't spawn
 
-[Continue until all complete...]
+[Block on task_id_3]
+> TaskOutput(task_id_3, block=true) → waits...
+> task_id_3 completes! Success.
+
+[Block on task_id_4]
+> TaskOutput(task_id_4, block=true) → waits...
+> task_id_4 completes! Success.
+
+[Done]
+> All 4 issues completed successfully
 ```
+
+## Why This Works
+
+1. **Agents run in parallel** - spawning with `run_in_background=true` means they execute concurrently
+2. **Blocking doesn't block them** - `TaskOutput(block=true)` only blocks YOU from continuing
+3. **Context stays small** - you only receive each agent's full output ONCE (when it finishes)
+4. **No polling accumulation** - no repeated partial progress eating context
