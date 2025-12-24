@@ -11,12 +11,13 @@ CODEX_SKILLS="$HOME/.codex/skills"
 AGENTS_SKILLS="$HOME/.agents/skills"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
 CODEX_PROMPTS="$HOME/.codex/prompts"
+CLAUDE_AGENTS="$HOME/.claude/agents"
 
-mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"
+mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS"
 
 # Clean up stale symlinks (pointing to this repo but target no longer exists)
 cleaned=()
-for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS"; do
+for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS"; do
     for link in "$dir"/*; do
         [[ ! -L "$link" ]] && continue
         target="$(readlink "$link")"
@@ -84,5 +85,29 @@ for cmd_file in "$SCRIPT_DIR"/commands/*.md; do
     commands+=("${cmd_name%.md}")
 done
 
+# Link agents (files)
+agents=()
+for agent_file in "$SCRIPT_DIR"/agents/*.md; do
+    [[ ! -f "$agent_file" ]] && continue
+    agent_name="$(basename "$agent_file")"
+
+    target="$CLAUDE_AGENTS/$agent_name"
+    if [[ -L "$target" ]]; then
+        # Only remove if it points to this repo
+        if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+            rm "$target"
+        else
+            echo "Warning: $target is a symlink to another location, skipping"
+            continue
+        fi
+    elif [[ -e "$target" ]]; then
+        echo "Warning: $target exists and is not a symlink, skipping"
+        continue
+    fi
+    ln -s "$agent_file" "$target"
+    agents+=("${agent_name%.md}")
+done
+
 echo "Linked ${#skills[@]} skills: ${skills[*]}"
 echo "Linked ${#commands[@]} commands: ${commands[*]}"
+echo "Linked ${#agents[@]} agents: ${agents[*]}"
