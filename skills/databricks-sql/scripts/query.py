@@ -177,14 +177,13 @@ def main():
     )
     parser.add_argument("query", help="SQL query to execute")
     parser.add_argument("-p", "--profile", help="Databricks config profile")
-    parser.add_argument("-t", "--timeout", default="50s", help="Query timeout (default: 50s)")
     parser.add_argument("-o", "--output", default="query_result.csv", help="Filename in /tmp (default: query_result.csv)")
 
     args = parser.parse_args()
 
     try:
         config = load_config(args.profile)
-        result = execute_sql(args.query, config, args.timeout)
+        result = execute_sql(args.query, config)
     except ResultSizeError as e:
         print(f"Warning: {e}", file=sys.stderr)
         sys.exit(RESULT_TOO_LARGE_EXIT_CODE)
