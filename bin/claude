@@ -38,7 +38,7 @@ CLAUDE_ARGS=()
 # Parse args - extract +server/-server, pass everything else through
 while [[ $# -gt 0 ]]; do
   case $1 in
-    +*)
+    +[a-zA-Z]*)
       ENABLED["${1:1}"]=1
       MCP_TOGGLE_USED=true
       shift
