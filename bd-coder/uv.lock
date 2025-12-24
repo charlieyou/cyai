@@ -33,7 +33,7 @@ wheels = [
 ]
 
 [[package]]
-name = "bd-parallel"
+name = "bd-coder"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

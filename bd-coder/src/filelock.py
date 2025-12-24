@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from contextlib import contextmanager
 
-LOCK_DIR = Path("/tmp/bd-parallel-locks")
+LOCK_DIR = Path("/tmp/bd-coder-locks")
 
 
 def _lock_path(filepath: str) -> Path:

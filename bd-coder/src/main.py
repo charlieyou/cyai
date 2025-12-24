@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-bd-parallel: Agent SDK orchestrator for parallel beads issue processing.
+bd-coder: Agent SDK orchestrator for parallel beads issue processing.
 
 Usage:
-    bd-parallel run [OPTIONS] [REPO_PATH]
-    bd-parallel clean
+    bd-coder run [OPTIONS] [REPO_PATH]
+    bd-coder clean
 """
 
 import asyncio
@@ -32,14 +32,14 @@ from claude_agent_sdk import (
 from .filelock import LOCK_DIR, release_all_locks
 
 # JSONL log directory
-JSONL_LOG_DIR = Path("/tmp/bd-parallel-logs/jsonl")
+JSONL_LOG_DIR = Path("/tmp/bd-coder-logs/jsonl")
 
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
 
 app = typer.Typer(
-    name="bd-parallel",
+    name="bd-coder",
     help="Parallel beads issue processing with Claude Agent SDK",
     add_completion=False,
 )
@@ -361,7 +361,7 @@ class BdParallelOrchestrator:
     async def run(self) -> int:
         """Main orchestration loop. Returns count of successful issues."""
         print()
-        log("●", f"bd-parallel orchestrator", Colors.MAGENTA)
+        log("●", f"bd-coder orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
         log("◐", f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m", Colors.GRAY, dim=True)
         print()
@@ -522,7 +522,7 @@ def clean():
 def status():
     """Show current orchestrator status."""
     print()
-    log("●", "bd-parallel status", Colors.MAGENTA)
+    log("●", "bd-coder status", Colors.MAGENTA)
     print()
 
     # Check locks
