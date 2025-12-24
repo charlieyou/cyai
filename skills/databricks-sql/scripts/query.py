@@ -112,15 +112,27 @@ def _result_requires_fetching(response: StatementResponse) -> bool:
     return False
 
 
+class QueryTimeoutError(RuntimeError):
+    """Raised when query times out but is still running."""
+
+    def __init__(self, message: str, statement_id: str):
+        super().__init__(message)
+        self.statement_id = statement_id
+
+
 def execute_sql(sql_query: str, config: WorkspaceConfig, timeout: str = "50s") -> QueryResult:
     """Execute SQL and return columns with types and rows."""
+    # Parse timeout to ensure HTTP timeout exceeds it
+    timeout_seconds = int(timeout.rstrip("s"))
+    http_timeout = timeout_seconds + 30  # Give extra buffer for network overhead
+
     client = WorkspaceClient(
         config=SdkConfig(
             host=config.host,
             token=config.token,
             profile=config.profile,
-            http_timeout_seconds=30,
-            retry_timeout_seconds=60,
+            http_timeout_seconds=http_timeout,
+            retry_timeout_seconds=http_timeout + 30,
         )
     )
 
@@ -146,10 +158,9 @@ def execute_sql(sql_query: str, config: WorkspaceConfig, timeout: str = "50s") -
 
     elif response.status and response.status.state in (StatementState.PENDING, StatementState.RUNNING):
         statement_id = response.statement_id or "unknown"
-        raise RuntimeError(
-            f"Query timed out after {timeout}. Statement ID: {statement_id}\n"
-            f"DO NOT RETRY - query continues running on warehouse.\n"
-            f"Monitor with: python monitor_query.py {statement_id}"
+        raise QueryTimeoutError(
+            f"Query timed out after {timeout}. DO NOT RETRY - query continues running on warehouse.",
+            statement_id=statement_id,
         )
 
     elif response.status:
@@ -177,6 +188,11 @@ def main():
     except ResultSizeError as e:
         print(f"Warning: {e}", file=sys.stderr)
         sys.exit(RESULT_TOO_LARGE_EXIT_CODE)
+    except QueryTimeoutError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print(f"Statement ID: {e.statement_id}")
+        print(f"Monitor with: ./monitor.sh {e.statement_id}")
+        sys.exit(2)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
