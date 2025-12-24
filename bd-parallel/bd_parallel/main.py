@@ -142,36 +142,35 @@ bd close {issue_id}    # Mark complete (after committing)
 - Run `bd show {issue_id}` to read requirements
 - The issue is already claimed (in_progress) - don't claim again
 - Read relevant existing code to understand patterns
-- Identify which files you'll need to modify
+- Identify ALL files you'll need to modify and prioritize them
 
-### 2. Lock Files
-Before editing ANY file, acquire a filesystem lock using atomic creation:
+### 2. File Locking Protocol
 
+**Lock helpers:**
 ```bash
 LOCK_DIR="{lock_dir}"
 AGENT_ID="{agent_id}"
 mkdir -p "$LOCK_DIR"
 
-# Convert filepath to lock name (e.g., src/foo.py -> src_foo_py)
-lock_file() {{
-    echo "$LOCK_DIR/${{1//\//_}}.lock"
+lock_file() {{ echo "$LOCK_DIR/${{1//\//_}}.lock"; }}
+
+try_lock() {{
+    ln -s "$AGENT_ID" "$(lock_file "$1")" 2>/dev/null
 }}
 
-# Acquire lock atomically (ln -s fails if target exists)
-acquire_lock() {{
-    local file="$1"
-    local lock=$(lock_file "$file")
-    for i in {{1..60}}; do
-        if ln -s "$AGENT_ID" "$lock" 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-    done
-    echo "BLOCKED: $file locked by $(readlink "$lock")"
-    return 1
+is_locked_by_me() {{
+    [ -L "$(lock_file "$1")" ] && [ "$(readlink "$(lock_file "$1")")" = "$AGENT_ID" ]
 }}
 
-# Release only YOUR locks
+lock_holder() {{
+    readlink "$(lock_file "$1")" 2>/dev/null
+}}
+
+release_lock() {{
+    local lock=$(lock_file "$1")
+    [ -L "$lock" ] && [ "$(readlink "$lock")" = "$AGENT_ID" ] && rm -f "$lock"
+}}
+
 release_my_locks() {{
     for lock in "$LOCK_DIR"/*.lock; do
         [ -L "$lock" ] && [ "$(readlink "$lock")" = "$AGENT_ID" ] && rm -f "$lock"
@@ -179,15 +178,37 @@ release_my_locks() {{
 }}
 ```
 
-**Usage:** Call `acquire_lock "src/foo.py"` before editing. On exit, call `release_my_locks`.
+**Acquisition strategy - work on other files while waiting:**
 
-**If blocked:** Return with status "BLOCKED: files held by <agent>"
+1. Try to acquire locks for ALL files you need
+2. For files you couldn't lock immediately:
+   - Note who holds each lock
+   - Use exponential backoff: 10s, 20s, 40s, 80s, 160s, 320s, 640s (max 15 min total)
+   - **While waiting, work on files you DO have locked**
+3. Only give up after 15 minutes of cumulative waiting per file
 
-### 3. Implement
-- Write clean code following project conventions
-- Handle edge cases
-- Add tests if appropriate
-- If you need additional files, lock them first
+**Example workflow:**
+```
+Need: [config.py, utils.py, main.py]
+
+1. try_lock config.py → SUCCESS
+2. try_lock utils.py  → BLOCKED by bd-43
+3. try_lock main.py   → SUCCESS
+
+→ Work on config.py and main.py first
+→ Periodically retry utils.py (exponential backoff)
+→ Once utils.py acquired, complete that work
+```
+
+**If still blocked after 15 min total wait:** Return with `"BLOCKED: <file> held by <holder> for 15+ min"`
+
+### 3. Implement (with lock-aware ordering)
+
+1. **Acquire all locks you can** - note which are blocked
+2. **Work on locked files first** - write code, don't commit yet
+3. **Retry blocked files** between chunks of work (exponential backoff)
+4. **Once all locks acquired**, complete remaining implementation
+5. Handle edge cases, add tests if appropriate
 
 ### 4. Quality Checks
 ```bash
@@ -206,37 +227,56 @@ Verify before committing:
 
 If issues found, fix them and re-run quality checks.
 
-### 6. Commit
+### 6. Commit BEFORE Releasing Locks
 ```bash
 git status             # Review changes
 git add <files>        # Stage YOUR code files only
 git commit -m "bd-{issue_id}: <summary>"
 ```
+
+**CRITICAL: Only release locks AFTER successful commit!**
 - Do NOT push - only commit locally
 - Do NOT commit `.beads/issues.jsonl` - orchestrator handles that
 
-### 7. Release Locks & Close
+### 7. Release Locks & Close (after commit)
 ```bash
-# Release only YOUR locks (not other agents')
+# Verify commit succeeded
+git log -1 --oneline
+
+# NOW release locks (after commit is safe)
 release_my_locks
 
 # Close the issue
 bd close {issue_id}
 ```
 
+## Lock Protocol Summary
+
+| Phase | Locks Held? | Action |
+|-------|-------------|--------|
+| Planning | No | Identify files needed |
+| Implementation | Yes | Acquire locks, work on available files |
+| Waiting | Partial | Work on locked files, retry blocked ones |
+| Quality checks | Yes | Keep all locks |
+| Commit | Yes | `git commit` while holding locks |
+| Cleanup | Releasing | Release locks AFTER commit succeeds |
+
 ## Rules
 
 1. **Lock before editing** - Never edit a file without locking it first
-2. **Complete the work** - Don't return until done
-3. **Fix all check failures** - Lint, type, format errors must pass
-4. **Stay in scope** - Implement what's asked, nothing more
-5. **Always release on exit** - Whether success, failure, or blocked
+2. **Work while waiting** - If blocked on file X, work on files you have locked
+3. **Exponential backoff** - 10s, 20s, 40s... up to 15 min total wait per file
+4. **Commit before release** - Only release locks after `git commit` succeeds
+5. **Complete the work** - Don't return until done or blocked 15+ min
+6. **Fix all check failures** - Lint, type, format errors must pass
+7. **Stay in scope** - Implement what's asked, nothing more
 
 ## Output
 
 When done, return a brief summary:
 - What was implemented
 - Files changed
+- Lock contention encountered (if any)
 - Any notes for follow-up
 """
 
