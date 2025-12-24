@@ -23,8 +23,8 @@ bd close <id>    # Mark complete (after committing)
 Register with Agent Mail to coordinate file access with other agents:
 
 ```
-mcp__mcp-agent-mail__ensure_project(human_key="<repo-absolute-path>")
-mcp__mcp-agent-mail__register_agent(project_key, program="claude-code", model="opus", task_description="<issue-id>")
+mcp__mail__ensure_project(human_key="<repo-absolute-path>")
+mcp__mail__register_agent(project_key, program="claude-code", model="opus", task_description="<issue-id>")
 ```
 
 Note your assigned agent name (e.g., "BlueLake") for all subsequent calls.
@@ -39,7 +39,7 @@ Note your assigned agent name (e.g., "BlueLake") for all subsequent calls.
 Before editing ANY files, reserve them:
 
 ```
-mcp__mcp-agent-mail__file_reservation_paths(
+mcp__mail__file_reservation_paths(
   project_key, agent_name,
   paths=["src/foo.py", "src/bar.py"],  # specific files you'll edit
   ttl_seconds=900,
@@ -86,7 +86,7 @@ git commit -m "bd-<id>: <summary>"
 
 ### 8. Release Files & Close
 ```
-mcp__mcp-agent-mail__release_file_reservations(project_key, agent_name)
+mcp__mail__release_file_reservations(project_key, agent_name)
 ```
 
 Then close the issue:

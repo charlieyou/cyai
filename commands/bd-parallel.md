@@ -34,8 +34,8 @@ You (Orchestrator)
 
 1. Register with Agent Mail:
    ```
-   mcp__mcp-agent-mail__ensure_project(human_key="<repo-absolute-path>")
-   mcp__mcp-agent-mail__register_agent(project_key, program="claude-code", model="opus", task_description="Beads orchestrator")
+   mcp__mail__ensure_project(human_key="<repo-absolute-path>")
+   mcp__mail__register_agent(project_key, program="claude-code", model="opus", task_description="Beads orchestrator")
    ```
    Note your agent name for potential cleanup operations.
 
@@ -95,7 +95,7 @@ bd show <issue-id> --json | jq -r .status
 - Parse subagent output for their agent name (look for "agent name: <name>" or similar)
 - **Release orphaned reservations** (critical!):
   ```
-  mcp__mcp-agent-mail__release_file_reservations(project_key, agent_name="<subagent-name>")
+  mcp__mail__release_file_reservations(project_key, agent_name="<subagent-name>")
   ```
 - Reset: `bd update <issue-id> --status ready`
 - Add issue to `failed_issues` set (don't retry this session)
