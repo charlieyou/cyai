@@ -347,7 +347,7 @@ class BdParallelOrchestrator:
             permission_mode="acceptEdits",
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
-            setting_sources=["project"],
+            setting_sources=["project", "user"],
         )
 
         try:
