@@ -102,42 +102,97 @@ app = typer.Typer(
 )
 
 
-# Claude Code style colors
+# Claude Code style colors (bright variants for better visibility)
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
-    GREEN = "\033[32m"
-    YELLOW = "\033[33m"
-    BLUE = "\033[34m"
-    MAGENTA = "\033[35m"
-    CYAN = "\033[36m"
-    RED = "\033[31m"
-    GRAY = "\033[90m"
+    # Bright colors for better terminal visibility
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    RED = "\033[91m"
+    GRAY = "\033[37m"  # Brighter than 90
+    WHITE = "\033[97m"
 
 
-def log(icon: str, message: str, color: str = Colors.RESET, dim: bool = False):
-    """Claude Code style logging."""
+# Agent color palette for distinguishing concurrent agents
+AGENT_COLORS = [
+    "\033[96m",  # Bright Cyan
+    "\033[93m",  # Bright Yellow
+    "\033[95m",  # Bright Magenta
+    "\033[92m",  # Bright Green
+    "\033[94m",  # Bright Blue
+    "\033[97m",  # Bright White
+]
+
+# Maps agent/issue IDs to their assigned colors
+_agent_color_map: dict[str, str] = {}
+_agent_color_index = 0
+
+
+def get_agent_color(agent_id: str) -> str:
+    """Get a consistent color for an agent based on its ID."""
+    global _agent_color_index
+    if agent_id not in _agent_color_map:
+        _agent_color_map[agent_id] = AGENT_COLORS[
+            _agent_color_index % len(AGENT_COLORS)
+        ]
+        _agent_color_index += 1
+    return _agent_color_map[agent_id]
+
+
+def log(
+    icon: str,
+    message: str,
+    color: str = Colors.RESET,
+    dim: bool = False,
+    agent_id: str | None = None,
+):
+    """Claude Code style logging with optional agent color coding."""
     style = Colors.DIM if dim else ""
     timestamp = datetime.now().strftime("%H:%M:%S")
+
+    # Use agent color if provided, otherwise use specified color
+    if agent_id:
+        agent_color = get_agent_color(agent_id)
+        prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
+    else:
+        prefix = ""
+
     print(
-        f"{Colors.GRAY}{timestamp}{Colors.RESET} {style}{color}{icon} {message}{Colors.RESET}"
+        f"{Colors.GRAY}{timestamp}{Colors.RESET} {prefix}{style}{color}{icon} {message}{Colors.RESET}"
     )
 
 
-def log_tool(tool_name: str, description: str = ""):
+def log_tool(tool_name: str, description: str = "", agent_id: str | None = None):
     """Log tool usage in Claude Code style."""
     icon = "⚙"
     desc = f" {Colors.DIM}{description}{Colors.RESET}" if description else ""
-    print(f"  {Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}")
 
-
-def log_result(success: bool, message: str):
-    """Log result in Claude Code style."""
-    if success:
-        print(f"  {Colors.GREEN}✓ {message}{Colors.RESET}")
+    if agent_id:
+        agent_color = get_agent_color(agent_id)
+        prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
     else:
-        print(f"  {Colors.RED}✗ {message}{Colors.RESET}")
+        prefix = ""
+
+    print(f"  {prefix}{Colors.CYAN}{icon} {tool_name}{Colors.RESET}{desc}")
+
+
+def log_result(success: bool, message: str, agent_id: str | None = None):
+    """Log result in Claude Code style."""
+    if agent_id:
+        agent_color = get_agent_color(agent_id)
+        prefix = f"{agent_color}[{agent_id}]{Colors.RESET} "
+    else:
+        prefix = ""
+
+    if success:
+        print(f"  {prefix}{Colors.GREEN}✓ {message}{Colors.RESET}")
+    else:
+        print(f"  {prefix}{Colors.RED}✗ {message}{Colors.RESET}")
 
 
 def get_git_branch(cwd: Path) -> str:
@@ -460,11 +515,16 @@ class BdParallelOrchestrator:
                                                 if len(block.text) > 100
                                                 else block.text
                                             )
+                                            agent_color = get_agent_color(issue_id)
                                             print(
-                                                f"    {Colors.DIM}{text}{Colors.RESET}"
+                                                f"    {agent_color}[{issue_id}]{Colors.RESET} {Colors.DIM}{text}{Colors.RESET}"
                                             )
                                         elif isinstance(block, ToolUseBlock):
-                                            log_tool(block.name, str(block.input)[:50])
+                                            log_tool(
+                                                block.name,
+                                                str(block.input)[:50],
+                                                agent_id=issue_id,
+                                            )
 
                                 elif isinstance(message, ResultMessage):
                                     final_result = message.result or ""
@@ -522,12 +582,12 @@ class BdParallelOrchestrator:
         """Spawn a new agent task for an issue. Returns True if spawned."""
         if not self.claim_issue(issue_id):
             self.failed_issues.add(issue_id)
-            log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW)
+            log("⚠", f"Failed to claim {issue_id}", Colors.YELLOW, agent_id=issue_id)
             return False
 
         task = asyncio.create_task(self.run_implementer(issue_id))
         self.active_tasks[issue_id] = task
-        log("▶", f"Agent started: {Colors.BOLD}{issue_id}{Colors.RESET}", Colors.BLUE)
+        log("▶", "Agent started", Colors.BLUE, agent_id=issue_id)
         return True
 
     async def run(self) -> int:
@@ -634,14 +694,16 @@ class BdParallelOrchestrator:
                                 )
                                 log(
                                     "✓",
-                                    f"{issue_id} ({duration_str}): {summary}",
+                                    f"({duration_str}): {summary}",
                                     Colors.GREEN,
+                                    agent_id=issue_id,
                                 )
                             else:
                                 log(
                                     "✗",
-                                    f"{issue_id} ({duration_str}): {result.summary}",
+                                    f"({duration_str}): {result.summary}",
                                     Colors.RED,
+                                    agent_id=issue_id,
                                 )
                                 self.failed_issues.add(issue_id)
                                 self.reset_issue(issue_id)
