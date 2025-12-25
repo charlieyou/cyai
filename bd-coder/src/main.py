@@ -16,7 +16,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+from dotenv import load_dotenv
 import typer
+
 from claude_agent_sdk import (
     ClaudeSDKClient,
     ClaudeAgentOptions,
@@ -34,6 +36,7 @@ from claude_agent_sdk.types import (
 )
 
 from .filelock import LOCK_DIR, release_all_locks
+from .braintrust_integration import init_braintrust, TracedAgentExecution
 
 # JSONL log directory
 JSONL_LOG_DIR = Path("/tmp/bd-coder-logs/jsonl")
@@ -408,53 +411,75 @@ class BdParallelOrchestrator:
             },
         )
 
+        # Braintrust tracing context
+        tracer = TracedAgentExecution(
+            issue_id=issue_id,
+            agent_id=agent_id,
+            metadata={
+                "session_id": session_id,
+                "repo_path": str(self.repo_path),
+                "timeout_seconds": self.timeout_seconds,
+            },
+        )
+
         try:
-            async with asyncio.timeout(self.timeout_seconds):
-                async with ClaudeSDKClient(options=options) as client:
-                    await client.query(prompt)
-                    jsonl_logger.log_user_prompt(prompt)
+            with tracer:
+                tracer.log_input(prompt)
 
-                    async for message in client.receive_response():
-                        # Log full message to JSONL
-                        jsonl_logger.log_message(message)
-
-                        # Console output
-                        if isinstance(message, AssistantMessage):
-                            for block in message.content:
-                                if isinstance(block, TextBlock):
-                                    text = block.text[:100] + "..." if len(block.text) > 100 else block.text
-                                    print(f"    {Colors.DIM}{text}{Colors.RESET}")
-                                elif isinstance(block, ToolUseBlock):
-                                    log_tool(block.name, str(block.input)[:50])
-
-                        elif isinstance(message, ResultMessage):
-                            final_result = message.result or ""
-
-            # Check if issue was closed
-            check = subprocess.run(
-                ["bd", "show", issue_id, "--json"],
-                capture_output=True,
-                text=True,
-                cwd=self.repo_path,
-            )
-            if check.returncode == 0:
                 try:
-                    issue_data = json.loads(check.stdout)
-                    # Handle both list and dict responses
-                    if isinstance(issue_data, list) and issue_data:
-                        issue_data = issue_data[0]
-                    if isinstance(issue_data, dict) and issue_data.get("status") == "closed":
-                        success = True
-                except json.JSONDecodeError:
-                    pass
+                    async with asyncio.timeout(self.timeout_seconds):
+                        async with ClaudeSDKClient(options=options) as client:
+                            await client.query(prompt)
+                            jsonl_logger.log_user_prompt(prompt)
 
-        except TimeoutError:
-            final_result = f"Timeout after {self.timeout_seconds // 60} minutes"
-            self._cleanup_agent_locks(agent_id)
+                            async for message in client.receive_response():
+                                # Log full message to JSONL
+                                jsonl_logger.log_message(message)
 
-        except Exception as e:
-            final_result = str(e)
-            self._cleanup_agent_locks(agent_id)
+                                # Log to Braintrust
+                                tracer.log_message(message)
+
+                                # Console output
+                                if isinstance(message, AssistantMessage):
+                                    for block in message.content:
+                                        if isinstance(block, TextBlock):
+                                            text = block.text[:100] + "..." if len(block.text) > 100 else block.text
+                                            print(f"    {Colors.DIM}{text}{Colors.RESET}")
+                                        elif isinstance(block, ToolUseBlock):
+                                            log_tool(block.name, str(block.input)[:50])
+
+                                elif isinstance(message, ResultMessage):
+                                    final_result = message.result or ""
+
+                    # Check if issue was closed (inside tracer context)
+                    check = subprocess.run(
+                        ["bd", "show", issue_id, "--json"],
+                        capture_output=True,
+                        text=True,
+                        cwd=self.repo_path,
+                    )
+                    if check.returncode == 0:
+                        try:
+                            issue_data = json.loads(check.stdout)
+                            # Handle both list and dict responses
+                            if isinstance(issue_data, list) and issue_data:
+                                issue_data = issue_data[0]
+                            if isinstance(issue_data, dict) and issue_data.get("status") == "closed":
+                                success = True
+                        except json.JSONDecodeError:
+                            pass
+
+                    tracer.set_success(success)
+
+                except TimeoutError:
+                    final_result = f"Timeout after {self.timeout_seconds // 60} minutes"
+                    tracer.set_error(final_result)
+                    self._cleanup_agent_locks(agent_id)
+
+                except Exception as e:
+                    final_result = str(e)
+                    tracer.set_error(final_result)
+                    self._cleanup_agent_locks(agent_id)
 
         finally:
             duration = asyncio.get_event_loop().time() - start_time
@@ -490,6 +515,12 @@ class BdParallelOrchestrator:
         log("●", "bd-coder orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
         log("◐", f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m", Colors.GRAY, dim=True)
+
+        # Initialize Braintrust tracing
+        if init_braintrust(project_name="bd-coder"):
+            log("◐", "braintrust: enabled", Colors.CYAN, dim=True)
+        else:
+            log("◐", "braintrust: disabled (set BRAINTRUST_API_KEY to enable)", Colors.GRAY, dim=True)
         print()
 
         # Setup directories
@@ -605,6 +636,9 @@ def run(
 ):
     """Run parallel beads issue processing."""
     repo_path = repo_path.resolve()
+
+    # Load environment variables from the target repo's .env (if present)
+    load_dotenv(dotenv_path=repo_path / ".env")
 
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
