@@ -1,11 +1,11 @@
-# bd-parallel
+# bd-coder
 
 A multi-agent system for processing beads issues in parallel using the Claude Agent SDK.
 
 ## Installation
 
 ```bash
-cd bd-parallel
+cd bd-coder
 uv sync
 ```
 
@@ -13,26 +13,22 @@ uv sync
 
 ```bash
 # Run the parallel worker (from repo with beads issues)
-bd-parallel run /path/to/repo
+bd-coder run /path/to/repo
 
 # Or with options
-bd-parallel run --max-agents 3 --timeout 30 --verbose /path/to/repo
+bd-coder run --max-agents 3 --timeout 30 --max-issues 5 /path/to/repo
 
-# View agent logs
-bd-parallel logs
-bd-parallel logs --agent bd-42 --tail 100
-
-# Check status (locks, running agents)
-bd-parallel status
+# Check status (locks, config, logs)
+bd-coder status
 
 # Clean up locks and logs
-bd-parallel clean
+bd-coder clean
 ```
 
 ## Architecture
 
 ```
-bd-parallel (Python Orchestrator)
+bd-coder (Python Orchestrator)
 ├── Spawns: N agents in parallel (asyncio tasks)
 ├── Each agent: ClaudeSDKClient session implementing one issue
 ├── Coordination: Filesystem locks prevent edit conflicts
@@ -74,34 +70,60 @@ Each spawned agent follows this workflow:
 - **Filesystem locks** via atomic mkdir (sandbox-compatible, no external deps)
 - **60-second lock timeout** (fail fast on conflicts)
 - **Orchestrator claims issues** before spawning (agents don't claim)
-- **Per-agent logs** in `/tmp/bd-parallel-logs/` for debugging
+- **JSONL logs** in `~/.config/bd-coder/logs/` for debugging
 - **asyncio.wait** for efficient parallel task management
 
 ## Configuration
 
-Options can be set via CLI flags:
+### CLI Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--max-agents`, `-n` | 3 | Maximum concurrent agents |
 | `--timeout`, `-t` | 30 | Timeout per agent in minutes |
-| `--verbose`, `-v` | false | Enable verbose logging |
+| `--max-issues`, `-i` | unlimited | Maximum total issues to process |
+
+### Global Configuration
+
+bd-coder uses a global config directory at `~/.config/bd-coder/`:
+
+```
+~/.config/bd-coder/
+├── .env          # API keys (ANTHROPIC_API_KEY, BRAINTRUST_API_KEY)
+└── logs/         # JSONL session logs
+```
+
+Environment variables are loaded in order (later overrides earlier):
+1. `~/.config/bd-coder/.env` (global config)
+2. `<repo>/.env` (repo-specific overrides)
+
+### Braintrust Tracing
+
+To enable Braintrust tracing for agent sessions, add your API key to the global config:
+
+```bash
+echo "BRAINTRUST_API_KEY=your-key" >> ~/.config/bd-coder/.env
+```
 
 ## Logs
 
-Agent logs are written to `/tmp/bd-parallel-logs/`:
+Agent logs are written in JSONL format to `~/.config/bd-coder/logs/`:
 
 ```
-agent-bd-42-a1b2c3d4.log
-agent-bd-43-e5f6g7h8.log
+<session-uuid>.jsonl
 ```
 
-View with:
+Check log status with:
 ```bash
-bd-parallel logs                    # Latest log
-bd-parallel logs --agent bd-42      # Filter by issue
-bd-parallel logs --tail 100         # More lines
+bd-coder status    # Shows recent logs and their timestamps
 ```
+
+## Terminal Output
+
+Agent output uses color-coded prefixes to distinguish concurrent agents:
+- Each agent gets a unique bright color (cyan, yellow, magenta, green, blue, white)
+- Log lines are prefixed with `[issue-id]` in the agent's color
+- Tool usage, text output, and completion status are all color-coded
 
 ## TODOs
 
