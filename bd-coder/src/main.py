@@ -38,8 +38,11 @@ from claude_agent_sdk.types import (
 from .filelock import LOCK_DIR, release_all_locks
 from .braintrust_integration import init_braintrust, TracedAgentExecution
 
+# User config directory (stores .env, logs, etc.)
+USER_CONFIG_DIR = Path.home() / ".config" / "bd-coder"
+
 # JSONL log directory
-JSONL_LOG_DIR = Path("/tmp/bd-coder-logs/jsonl")
+JSONL_LOG_DIR = USER_CONFIG_DIR / "logs"
 
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "implementer_prompt.md"
@@ -117,7 +120,9 @@ def log(icon: str, message: str, color: str = Colors.RESET, dim: bool = False):
     """Claude Code style logging."""
     style = Colors.DIM if dim else ""
     timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"{Colors.GRAY}{timestamp}{Colors.RESET} {style}{color}{icon} {message}{Colors.RESET}")
+    print(
+        f"{Colors.GRAY}{timestamp}{Colors.RESET} {style}{color}{icon} {message}{Colors.RESET}"
+    )
 
 
 def log_tool(tool_name: str, description: str = ""):
@@ -203,12 +208,14 @@ class JSONLLogger:
                 if isinstance(block, TextBlock):
                     assistant_content.append({"type": "text", "text": block.text})
                 elif isinstance(block, ToolUseBlock):
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": getattr(block, "id", f"tool_{self.message_count}"),
-                        "name": block.name,
-                        "input": block.input,  # Full params, not truncated
-                    })
+                    assistant_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": getattr(block, "id", f"tool_{self.message_count}"),
+                            "name": block.name,
+                            "input": block.input,  # Full params, not truncated
+                        }
+                    )
                 elif isinstance(block, ToolResultBlock):
                     # Tool results are logged as separate "user" type entries
                     tool_use_id = getattr(block, "tool_use_id", None)
@@ -283,9 +290,7 @@ class JSONLLogger:
             "cwd": str(self.cwd),
             "gitBranch": self.git_branch,
             "message": {
-                "content": [
-                    {"type": "text", "text": prompt}
-                ],
+                "content": [{"type": "text", "text": prompt}],
             },
         }
         self._write(entry)
@@ -378,7 +383,12 @@ class BdParallelOrchestrator:
                 pass
 
         if cleaned:
-            log("🧹", f"Cleaned {cleaned} locks for {agent_id[:8]}", Colors.GRAY, dim=True)
+            log(
+                "🧹",
+                f"Cleaned {cleaned} locks for {agent_id[:8]}",
+                Colors.GRAY,
+                dim=True,
+            )
 
     async def run_implementer(self, issue_id: str) -> IssueResult:
         """Run bd-implementer agent for a single issue."""
@@ -445,8 +455,14 @@ class BdParallelOrchestrator:
                                 if isinstance(message, AssistantMessage):
                                     for block in message.content:
                                         if isinstance(block, TextBlock):
-                                            text = block.text[:100] + "..." if len(block.text) > 100 else block.text
-                                            print(f"    {Colors.DIM}{text}{Colors.RESET}")
+                                            text = (
+                                                block.text[:100] + "..."
+                                                if len(block.text) > 100
+                                                else block.text
+                                            )
+                                            print(
+                                                f"    {Colors.DIM}{text}{Colors.RESET}"
+                                            )
                                         elif isinstance(block, ToolUseBlock):
                                             log_tool(block.name, str(block.input)[:50])
 
@@ -466,7 +482,10 @@ class BdParallelOrchestrator:
                             # Handle both list and dict responses
                             if isinstance(issue_data, list) and issue_data:
                                 issue_data = issue_data[0]
-                            if isinstance(issue_data, dict) and issue_data.get("status") == "closed":
+                            if (
+                                isinstance(issue_data, dict)
+                                and issue_data.get("status") == "closed"
+                            ):
                                 success = True
                         except json.JSONDecodeError:
                             pass
@@ -517,13 +536,23 @@ class BdParallelOrchestrator:
         log("●", "bd-coder orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
         limit_str = str(self.max_issues) if self.max_issues is not None else "unlimited"
-        log("◐", f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}", Colors.GRAY, dim=True)
+        log(
+            "◐",
+            f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}",
+            Colors.GRAY,
+            dim=True,
+        )
 
         # Initialize Braintrust tracing
         if init_braintrust(project_name="bd-coder"):
             log("◐", "braintrust: enabled", Colors.CYAN, dim=True)
         else:
-            log("◐", "braintrust: disabled (set BRAINTRUST_API_KEY to enable)", Colors.GRAY, dim=True)
+            log(
+                "◐",
+                f"braintrust: disabled (add BRAINTRUST_API_KEY to {USER_CONFIG_DIR}/.env)",
+                Colors.GRAY,
+                dim=True,
+            )
         print()
 
         # Setup directories
@@ -535,7 +564,9 @@ class BdParallelOrchestrator:
         try:
             while True:
                 # Check if we've reached the issue limit
-                limit_reached = self.max_issues is not None and issues_spawned >= self.max_issues
+                limit_reached = (
+                    self.max_issues is not None and issues_spawned >= self.max_issues
+                )
 
                 # Fill up to max_agents (unless limit reached)
                 ready = self.get_ready_issues() if not limit_reached else []
@@ -549,18 +580,28 @@ class BdParallelOrchestrator:
                         if await self.spawn_agent(issue_id):
                             issues_spawned += 1
                             # Check limit after each spawn
-                            if self.max_issues is not None and issues_spawned >= self.max_issues:
+                            if (
+                                self.max_issues is not None
+                                and issues_spawned >= self.max_issues
+                            ):
                                 break
 
                 if not self.active_tasks:
                     if limit_reached:
-                        log("○", f"Issue limit reached ({self.max_issues})", Colors.GRAY)
+                        log(
+                            "○", f"Issue limit reached ({self.max_issues})", Colors.GRAY
+                        )
                     elif not ready:
                         log("○", "No more issues to process", Colors.GRAY)
                     break
 
                 # Wait for ANY task to complete
-                log("◌", f"Waiting for {len(self.active_tasks)} agent(s)...", Colors.GRAY, dim=True)
+                log(
+                    "◌",
+                    f"Waiting for {len(self.active_tasks)} agent(s)...",
+                    Colors.GRAY,
+                    dim=True,
+                )
 
                 done, _ = await asyncio.wait(
                     self.active_tasks.values(),
@@ -586,10 +627,22 @@ class BdParallelOrchestrator:
 
                             duration_str = f"{result.duration_seconds:.0f}s"
                             if result.success:
-                                summary = result.summary[:50] + "..." if len(result.summary) > 50 else result.summary
-                                log("✓", f"{issue_id} ({duration_str}): {summary}", Colors.GREEN)
+                                summary = (
+                                    result.summary[:50] + "..."
+                                    if len(result.summary) > 50
+                                    else result.summary
+                                )
+                                log(
+                                    "✓",
+                                    f"{issue_id} ({duration_str}): {summary}",
+                                    Colors.GREEN,
+                                )
                             else:
-                                log("✗", f"{issue_id} ({duration_str}): {result.summary}", Colors.RED)
+                                log(
+                                    "✗",
+                                    f"{issue_id} ({duration_str}): {result.summary}",
+                                    Colors.RED,
+                                )
                                 self.failed_issues.add(issue_id)
                                 self.reset_issue(issue_id)
                             break
@@ -649,14 +702,20 @@ def run(
     ] = 30,
     max_issues: Annotated[
         int | None,
-        typer.Option("--max-issues", "-i", help="Maximum issues to process (default: unlimited)"),
+        typer.Option(
+            "--max-issues", "-i", help="Maximum issues to process (default: unlimited)"
+        ),
     ] = None,
 ):
     """Run parallel beads issue processing."""
     repo_path = repo_path.resolve()
 
-    # Load environment variables from the target repo's .env (if present)
-    load_dotenv(dotenv_path=repo_path / ".env")
+    # Ensure user config directory exists
+    USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Load environment variables: user config first, then repo .env (repo overrides)
+    load_dotenv(dotenv_path=USER_CONFIG_DIR / ".env")
+    load_dotenv(dotenv_path=repo_path / ".env", override=True)
 
     if not repo_path.exists():
         log("✗", f"Repository not found: {repo_path}", Colors.RED)
@@ -704,6 +763,14 @@ def status():
     log("●", "bd-coder status", Colors.MAGENTA)
     print()
 
+    # Show config directory
+    config_env = USER_CONFIG_DIR / ".env"
+    if config_env.exists():
+        log("◐", f"config: {config_env}", Colors.GRAY, dim=True)
+    else:
+        log("○", f"config: {config_env} (not found)", Colors.GRAY, dim=True)
+    print()
+
     # Check locks
     if LOCK_DIR.exists():
         locks = list(LOCK_DIR.glob("*.lock"))
@@ -726,10 +793,19 @@ def status():
     if JSONL_LOG_DIR.exists():
         jsonl_files = list(JSONL_LOG_DIR.glob("*.jsonl"))
         if jsonl_files:
-            log("◐", f"{len(jsonl_files)} JSONL logs in {JSONL_LOG_DIR}", Colors.GRAY, dim=True)
-            recent = sorted(jsonl_files, key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+            log(
+                "◐",
+                f"{len(jsonl_files)} JSONL logs in {JSONL_LOG_DIR}",
+                Colors.GRAY,
+                dim=True,
+            )
+            recent = sorted(jsonl_files, key=lambda p: p.stat().st_mtime, reverse=True)[
+                :3
+            ]
             for log_file in recent:
-                mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime("%H:%M:%S")
+                mtime = datetime.fromtimestamp(log_file.stat().st_mtime).strftime(
+                    "%H:%M:%S"
+                )
                 print(f"    {Colors.DIM}{mtime} {log_file.name}{Colors.RESET}")
     print()
 
