@@ -10,24 +10,14 @@ model_name=$(echo "$input" | jq -r '.model.display_name')
 current_dir=$(echo "$input" | jq -r '.workspace.current_dir')
 
 # Extract context window information
-context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-
-# Use pre-computed totals - these reset properly after /new command
-# (Don't fall back to current_usage which includes cache tokens that persist across sessions)
-total_input=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-total_output=$(echo "$input" | jq -r '.context_window.total_output_tokens // 0')
-current_tokens=$((total_input + total_output))
-context_percent=$((current_tokens * 100 / context_size))
-
-[ -n "$DEBUG" ] && echo "DEBUG: total_input=$total_input total_output=$total_output tokens=$current_tokens size=$context_size pct=$context_percent" >&2
-
-# Build context progress bar (15 chars wide)
-bar_width=15
-filled=$((context_percent * bar_width / 100))
-empty=$((bar_width - filled))
-bar=""
-for ((i=0; i<filled; i++)); do bar+="█"; done
-for ((i=0; i<empty; i++)); do bar+="░"; done
+# total_context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+context_max=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+usage=$(echo "$input" | jq '.context_window.current_usage')
+if [ "$usage" != "null" ]; then
+    context_used=$(echo "$usage" | jq '.input_tokens + .cache_creation_input_tokens + .cache_read_input_tokens')
+else
+    context_used=0
+fi
 
 # Get directory name (replace home directory with ~)
 dir_name=$(echo "$current_dir" | sed "s|^$HOME|~|")
@@ -73,8 +63,21 @@ else
     git_info=""
 fi
 
-# Build context bar display
-context_info="${GRAY}${bar}${NC} ${context_percent}%"
+# Calculate percentage and build progress bar
+context_percent=$((context_used * 100 / context_max))
+bar_width=15
+filled=$((context_percent * bar_width / 100))
+empty=$((bar_width - filled))
+bar=""
+for ((i=0; i<filled; i++)); do bar+="█"; done
+for ((i=0; i<empty; i++)); do bar+="░"; done
+
+# Format numbers as k
+used_k=$((context_used / 1000))
+max_k=$((context_max / 1000))
+
+# Build context display: bar + percentage + raw numbers in parens
+context_info="${GRAY}${bar}${NC} ${context_percent}% (${used_k}k/${max_k}k)"
 
 # Output the status line
 echo -e "${BLUE}${dir_name}${NC} ${GRAY}|${NC} ${CYAN}${model_name}${NC} ${GRAY}|${NC} ${context_info}${git_info:+ ${GRAY}|${NC}}${git_info}"
