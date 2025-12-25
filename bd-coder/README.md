@@ -110,9 +110,6 @@ Ideas
 * agent mail using filesystem?
 * use codex for code review?
 
-* Add beads
-* Add limit on number of issues to do
-
 ### Context Exhaustion Handling
 When agents run out of context mid-implementation:
 - [ ] Detect context exhaustion (agent returns incomplete)
