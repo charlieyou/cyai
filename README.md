@@ -66,17 +66,3 @@ DEFAULT_ENABLED=()
 | `healthcheck` | Perform a comprehensive code health review of a codebase |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
 
-## bd-coder
-
-Python orchestrator for parallel beads issue processing using the Claude Agent SDK.
-See [bd-coder/README.md](bd-coder/README.md) for details.
-
-## bd-parallel (Claude Code Orchestrator)
-
-An alternative approach using Claude Code's native Task tool to spawn parallel subagents.
-Uses `commands/bd-parallel.md` as the orchestrator and `agents/bd-implementer.md` as subagents.
-
-**Status: Not recommended** - Currently doesn't work well because all context from background
-tasks gets dumped into the parent agent when using `TaskOutput`. This causes context explosion
-even with blocking waits. Boris said this will be fixed in the next version of Claude Code.
-
