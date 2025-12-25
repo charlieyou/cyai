@@ -315,10 +315,12 @@ class BdParallelOrchestrator:
         repo_path: Path,
         max_agents: int = 3,
         timeout_minutes: int = 30,
+        max_issues: int | None = None,
     ):
         self.repo_path = repo_path.resolve()
         self.max_agents = max_agents
         self.timeout_seconds = timeout_minutes * 60
+        self.max_issues = max_issues
 
         self.active_tasks: dict[str, asyncio.Task] = {}
         self.agent_ids: dict[str, str] = {}
@@ -514,7 +516,8 @@ class BdParallelOrchestrator:
         print()
         log("●", "bd-coder orchestrator", Colors.MAGENTA)
         log("◐", f"repo: {self.repo_path}", Colors.GRAY, dim=True)
-        log("◐", f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m", Colors.GRAY, dim=True)
+        limit_str = str(self.max_issues) if self.max_issues is not None else "unlimited"
+        log("◐", f"max-agents: {self.max_agents}, timeout: {self.timeout_seconds // 60}m, max-issues: {limit_str}", Colors.GRAY, dim=True)
 
         # Initialize Braintrust tracing
         if init_braintrust(project_name="bd-coder"):
@@ -527,10 +530,15 @@ class BdParallelOrchestrator:
         LOCK_DIR.mkdir(exist_ok=True)
         JSONL_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+        issues_spawned = 0
+
         try:
             while True:
-                # Fill up to max_agents
-                ready = self.get_ready_issues()
+                # Check if we've reached the issue limit
+                limit_reached = self.max_issues is not None and issues_spawned >= self.max_issues
+
+                # Fill up to max_agents (unless limit reached)
+                ready = self.get_ready_issues() if not limit_reached else []
 
                 if ready:
                     log("◌", f"Ready issues: {', '.join(ready)}", Colors.GRAY, dim=True)
@@ -538,10 +546,16 @@ class BdParallelOrchestrator:
                 while len(self.active_tasks) < self.max_agents and ready:
                     issue_id = ready.pop(0)
                     if issue_id not in self.active_tasks:
-                        await self.spawn_agent(issue_id)
+                        if await self.spawn_agent(issue_id):
+                            issues_spawned += 1
+                            # Check limit after each spawn
+                            if self.max_issues is not None and issues_spawned >= self.max_issues:
+                                break
 
                 if not self.active_tasks:
-                    if not ready:
+                    if limit_reached:
+                        log("○", f"Issue limit reached ({self.max_issues})", Colors.GRAY)
+                    elif not ready:
                         log("○", "No more issues to process", Colors.GRAY)
                     break
 
@@ -633,6 +647,10 @@ def run(
         int,
         typer.Option("--timeout", "-t", help="Timeout per agent in minutes"),
     ] = 30,
+    max_issues: Annotated[
+        int | None,
+        typer.Option("--max-issues", "-i", help="Maximum issues to process (default: unlimited)"),
+    ] = None,
 ):
     """Run parallel beads issue processing."""
     repo_path = repo_path.resolve()
@@ -648,6 +666,7 @@ def run(
         repo_path=repo_path,
         max_agents=max_agents,
         timeout_minutes=timeout,
+        max_issues=max_issues,
     )
 
     success_count = asyncio.run(orchestrator.run())
