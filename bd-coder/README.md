@@ -71,7 +71,7 @@ Each spawned agent follows this workflow:
 
 ## Key Design Decisions
 
-- **Filesystem locks** via atomic symlink creation (fast, no external deps)
+- **Filesystem locks** via atomic mkdir (sandbox-compatible, no external deps)
 - **60-second lock timeout** (fail fast on conflicts)
 - **Orchestrator claims issues** before spawning (agents don't claim)
 - **Per-agent logs** in `/tmp/bd-parallel-logs/` for debugging
@@ -104,6 +104,11 @@ bd-parallel logs --tail 100         # More lines
 ```
 
 ## TODOs
+
+Ideas
+* Add back claude orchestrator, manually managing context
+* agent mail using filesystem?
+* use codex for code review?
 
 ### Context Exhaustion Handling
 When agents run out of context mid-implementation:

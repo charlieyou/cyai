@@ -26,6 +26,12 @@ from claude_agent_sdk import (
     ToolUseBlock,
     ToolResultBlock,
 )
+from claude_agent_sdk.types import (
+    HookMatcher,
+    PreToolUseHookInput,
+    HookContext,
+    SyncHookJSONOutput,
+)
 
 from .filelock import LOCK_DIR, release_all_locks
 
@@ -35,6 +41,53 @@ JSONL_LOG_DIR = Path("/tmp/bd-coder-logs/jsonl")
 # Load implementer prompt from file
 PROMPT_FILE = Path(__file__).parent / "implementer_prompt.md"
 IMPLEMENTER_PROMPT_TEMPLATE = PROMPT_FILE.read_text()
+
+# Dangerous bash command patterns to block
+DANGEROUS_PATTERNS = [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf $HOME",
+    ":(){:|:&};:",  # fork bomb
+    "mkfs.",
+    "dd if=",
+    "> /dev/sd",
+    "chmod -R 777 /",
+    "curl | bash",
+    "wget | bash",
+    "curl | sh",
+    "wget | sh",
+]
+
+
+async def block_dangerous_commands(
+    hook_input: PreToolUseHookInput,
+    stderr: str | None,
+    context: HookContext,
+) -> SyncHookJSONOutput:
+    """PreToolUse hook to block dangerous bash commands."""
+    if hook_input["tool_name"] != "Bash":
+        return {}  # Allow non-Bash tools
+
+    command = hook_input["tool_input"].get("command", "")
+
+    # Block dangerous patterns
+    for pattern in DANGEROUS_PATTERNS:
+        if pattern in command:
+            return {
+                "decision": "block",
+                "reason": f"Blocked dangerous command pattern: {pattern}",
+            }
+
+    # Block force push to main/master
+    if "git push" in command and ("--force" in command or "-f" in command):
+        if "main" in command or "master" in command:
+            return {
+                "decision": "block",
+                "reason": "Blocked force push to main/master branch",
+            }
+
+    return {}  # Allow the command
+
 
 app = typer.Typer(
     name="bd-coder",
@@ -344,10 +397,15 @@ class BdParallelOrchestrator:
 
         options = ClaudeAgentOptions(
             cwd=str(self.repo_path),
-            permission_mode="acceptEdits",
+            permission_mode="bypassPermissions",
             model="opus",
             system_prompt={"type": "preset", "preset": "claude_code"},
             setting_sources=["project", "user"],
+            hooks={
+                "PreToolUse": [
+                    HookMatcher(matcher=None, hooks=[block_dangerous_commands])
+                ]
+            },
         )
 
         try:
