@@ -22,7 +22,8 @@ When in doubt, prioritize:
 - Proceed to architecture review only if earlier phases reveal systemic patterns
 - Stop cataloging a category once you have 3–5 clear examples—the pattern is established
 - Skip Low-severity issues unless they cluster (3+ instances = worth noting)
-- Total output should be 15–30 issues maximum; beyond that, you're cataloging, not prioritizing
+- Keep output concise; stop once patterns are clearly established
+- Avoid duplicate "missing tests" tickets; include tests in the main fix unless tests are the only change
 
 ---
 
@@ -123,6 +124,7 @@ Before flagging an issue as Critical or High:
 2. Check if a test already covers the "missing" case
 3. Verify "hallucinated APIs" aren't custom wrappers or aliases defined elsewhere
 4. If uncertain, mark as **"Needs verification"** rather than asserting
+5. State evidence of reachability (call path/config/entry). If unknown, lower confidence and severity.
 
 ---
 
@@ -137,21 +139,34 @@ Before flagging an issue as Critical or High:
 
 ## Output Format
 
-Produce a **single unified list** of issues, sorted by severity (Critical first, then High, Medium, Low).
+Start with a short **Method** block (3–6 bullets) listing: tests run, entry points reviewed, key files scanned, and assumptions/unknowns.
+
+Then produce a **single unified list** of issues, sorted by severity (Critical first, then High, Medium, Low).
 
 For each issue:
 
 ```
 ### [Severity] Short title
 
-**Location**: `path/to/file.ts:lines` (approximate is fine)
-**Category**: Correctness | Dead Code | AI Smell | Structure | Hygiene | Architecture
-**Problem**: What's wrong and why it matters (1–3 sentences)
-**Fix**: Concrete action to resolve (1–3 sentences)
-**Effort**: Quick fix (<30 min) | Small refactor (0.5–1 day) | Major refactor (>1 day)
+**Primary files**: `path/to/file.ts:lines` (list all files touched; approximate lines fine)
+**Category**: Correctness | Dead Code | AI Smell | Structure | Hygiene | Architecture | Config Drift
+**Type**: bug | task | chore (use bug for broken behavior, task for refactors, chore for cleanup)
+**Confidence**: High | Medium | Low
+**Context**:
+- What's wrong (1 sentence)
+- Why it matters / who or what breaks (1–2 sentences)
+- Related context if needed (optional)
+**Fix**: Concrete action to resolve (1–3 sentences). Include tests here unless tests are the only change.
+**Non-goals**: What's explicitly out of scope (1–2 bullets; recommended for Medium+ severity)
+**Acceptance Criteria**: 1–3 bullets
+**Test Plan**: 1–2 bullets
+**Agent Notes**: Gotchas, edge cases, or constraints an implementer should know (optional)
+**Dependencies**: Optional – list other issues that must complete first
 ```
 
 Keep descriptions tight. If you need more than 3 sentences, you're over-explaining.
+
+> **Downstream**: This output feeds directly into `/bd-breakdown` for ticket creation.
 
 ---
 
@@ -161,15 +176,15 @@ After the issue list, provide:
 
 ### Top Investments
 
-A table of the **10 highest-leverage fixes** (best impact-to-effort ratio):
+A table of the **10 highest-impact fixes** (risk reduction, correctness, clarity):
 
-| # | Location | Issue | Severity | Effort | First Step |
-|---|----------|-------|----------|--------|------------|
-| 1 | ... | ... | ... | ... | ... |
+| # | Location | Issue | Severity | First Step |
+|---|----------|-------|----------|------------|
+| 1 | ... | ... | ... | ... |
 
 ### Recommendations
 
-- **Do immediately** (this week): 3 specific items, all Quick Fix or Small Refactor, prioritizing Critical/High
+- **Do immediately** (this week): 3 specific items, prioritizing Critical/High
 - **Plan for next sprint**: 3 specific items that address systemic issues
 - **Backlog**: 1–2 Major Refactors worth planning, with suggested phase boundaries
 
