@@ -31,7 +31,7 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 
 - Create small, high-signal issues that are easy to pick up without prior context.
 - Minimize file overlap across issues so agents can work in parallel.
-- Use dependencies to serialize work **only when two issues must touch the same file**.
+- **Ensure correct dependencies**: if two issues touch the same file, they MUST have a dependency between them. Lean toward adding more dependencies rather than fewer — a missed dependency causes agent conflicts and wasted work.
 - Include TDD guidance when appropriate.
 
 ## Sizing Rules
@@ -45,10 +45,14 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 
 ## Parallelization Rules
 
+**CRITICAL: Getting dependencies right is essential.** When in doubt, add the dependency. It is far better to have too many dependencies (slower but correct) than too few (agents clobbering each other's work).
+
+- **If two issues touch the same file, they CANNOT run in parallel.** Add a dependency.
 - Prefer splits by module/file/feature boundary.
 - **Do not** create two issues that edit the same file unless one blocks the other.
 - If overlap is unavoidable, add a dependency and explain the ordering.
 - Avoid cross-cutting refactors that force multiple agents to touch the same files.
+- **Err on the side of more dependencies.** A missed dependency causes merge conflicts and wasted agent work. An extra dependency just means sequential execution.
 
 ## Priority Mapping
 
@@ -130,8 +134,9 @@ bd dep add ISSUE-B ISSUE-A
 ## Quality Checks Before Finalizing
 
 - No duplicate issues
-- No two parallel issues edit the same file
-- Dependencies only where file overlap exists
+- **No two parallel issues edit the same file** — if they touch the same file, one MUST depend on the other
+- **Verify every file appears in at most one independent issue** — scan the "Primary files" lists and ensure no file is listed in two issues that lack a dependency chain between them
+- Dependencies must be complete: when uncertain, add the dependency (too many is safer than too few)
 - Every issue has clear acceptance criteria and test plan
 - TDD included when appropriate
 - All issues are grounded in the provided input; if input has `Confidence: Low` or `Medium`, add "Needs verification" to Context

@@ -167,25 +167,3 @@ For each issue:
 Keep descriptions tight. If you need more than 3 sentences, you're over-explaining.
 
 > **Downstream**: This output feeds directly into `/bd-breakdown` for ticket creation.
-
----
-
-## Summary
-
-After the issue list, provide:
-
-### Top Investments
-
-A table of the **10 highest-impact fixes** (risk reduction, correctness, clarity):
-
-| # | Location | Issue | Severity | First Step |
-|---|----------|-------|----------|------------|
-| 1 | ... | ... | ... | ... |
-
-### Recommendations
-
-- **Do immediately** (this week): 3 specific items, prioritizing Critical/High
-- **Plan for next sprint**: 3 specific items that address systemic issues
-- **Backlog**: 1–2 Major Refactors worth planning, with suggested phase boundaries
-
-Each recommendation should be concrete enough to create a ticket from directly.
