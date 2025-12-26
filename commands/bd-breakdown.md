@@ -41,6 +41,7 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 - Use **parent-child dependencies** when splitting into an epic with children.
 - Each issue should touch **1–2 primary files** whenever possible.
 - If a change spans 3+ files, consider a coordinating epic and split by file/domain.
+- **Epic default**: when creating 3+ related issues from a single review/plan scope, first create an umbrella epic for that scope and attach all issues (or sub-epics) as parent-child dependencies. If a sub-area needs 3+ issues, create a sub-epic and attach it to the umbrella epic.
 
 ## Parallelization Rules
 
