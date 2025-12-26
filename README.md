@@ -56,13 +56,26 @@ DEFAULT_ENABLED=()
 
 | Skill | Description |
 |-------|-------------|
+| `databricks-bundle` | Manage Databricks Asset Bundles (DABs) for infrastructure as code |
 | `databricks-jobs` | Manage Databricks Jobs via CLI (create, run, monitor, delete jobs) |
+| `databricks-sql` | Execute SQL queries against Databricks SQL Warehouses |
+| `databricks-unity-catalog` | Manage Unity Catalog via Databricks CLI (catalogs, schemas, tables, volumes) |
+| `pyspark-style` | PySpark code style and best practices for DataFrame API |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `bd-breakdown` | Convert a review or feature plan into small, parallelizable Beads issues |
+| `bd-implement` | Implement a beads issue end-to-end with quality checks |
+| `bd-parallel` | Continuously process beads issues with parallel subagents |
 | `diary` | Create a structured diary entry from the current session |
-| `healthcheck` | Perform a comprehensive code health review of a codebase |
+| `healthcheck` | Code health review optimized for AI-generated codebases |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
+
+## Agents
+
+| Agent | Description |
+|-------|-------------|
+| `bd-implementer` | Subagent that implements beads issues end-to-end (used by bd-parallel) |
 
