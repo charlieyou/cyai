@@ -1,5 +1,6 @@
 ---
 description: Convert a review or feature plan into small, parallelizable Beads issues with rich descriptions and dependencies.
+argument-hint: <issue-scope>
 ---
 
 # Beads Issue Breakdown (Reviews or Plans)
@@ -7,6 +8,10 @@ description: Convert a review or feature plan into small, parallelizable Beads i
 > **Upstream**: This skill accepts output from `/healthcheck` or any structured review/plan.
 
 You are creating **bd (beads)** issues from a code review or a feature plan. Optimize for **parallel execution** by a swarm of agents and ensure each issue is **small enough for one agent to finish in a single thread**.
+
+**Issue creation instructions (from command arguments):** $ARGUMENTS
+
+Use the arguments above as the **authoritative scope** for what to create issues for. If they are missing, vague, or conflict with the input, ask up to 3 clarifying questions before producing issues.
 
 If input is missing critical context (scope, expected behavior, or affected areas), ask **up to 3 clarifying questions** before producing issues.
 
