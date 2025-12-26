@@ -30,6 +30,30 @@ for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" 
 done
 [[ ${#cleaned[@]} -gt 0 ]] && echo "Cleaned ${#cleaned[@]} stale symlinks: ${cleaned[*]}"
 
+# Copy skills into Codex directory (Codex ignores symlinked skills)
+copy_skill_to_codex() {
+    local source_dir="$1"
+    local target_dir="$2"
+
+    [[ ! -d "$source_dir" ]] && return 0
+
+    if [[ -L "$target_dir" ]]; then
+        rm "$target_dir"
+    fi
+    mkdir -p "$target_dir"
+    rsync -a --delete "$source_dir"/ "$target_dir"/
+}
+
+# Convert any existing symlinked Codex skills to real copies
+for link in "$CODEX_SKILLS"/*; do
+    [[ ! -L "$link" ]] && continue
+    src="$(readlink "$link")"
+    [[ -d "$src" ]] || continue
+    name="$(basename "$link")"
+    rm "$link"
+    copy_skill_to_codex "$src" "$CODEX_SKILLS/$name"
+done
+
 # Link skills (directories)
 skills=()
 for skill_dir in "$SCRIPT_DIR"/skills/*/; do
@@ -38,6 +62,10 @@ for skill_dir in "$SCRIPT_DIR"/skills/*/; do
     [[ "$skill_name" == .* ]] && continue
 
     for target in "$CLAUDE_SKILLS/$skill_name" "$CODEX_SKILLS/$skill_name" "$AGENTS_SKILLS/$skill_name"; do
+        if [[ "$target" == "$CODEX_SKILLS/$skill_name" ]]; then
+            copy_skill_to_codex "$skill_dir" "$target"
+            continue
+        fi
         if [[ -L "$target" ]]; then
             # Only remove if it points to this repo
             if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
