@@ -19,7 +19,8 @@ REVIEWS_DIR="$REVIEW_DIR/reviews"
 # --- Preflight checks ---
 preflight_check() {
     local missing=()
-    for cmd in jq; do
+    # Required: jq and claude
+    for cmd in jq claude; do
         command -v "$cmd" >/dev/null || missing+=("$cmd")
     done
 
@@ -28,19 +29,12 @@ preflight_check() {
         exit 1
     fi
 
-    # Check for at least one reviewer
-    local has_reviewer=false
-    for cmd in claude codex gemini; do
-        if command -v "$cmd" >/dev/null; then
-            has_reviewer=true
-            break
+    # Optional: codex and gemini (warn if missing, but continue)
+    for cmd in codex gemini; do
+        if ! command -v "$cmd" >/dev/null; then
+            echo "Warning: $cmd not found, will skip this reviewer" >&2
         fi
     done
-
-    if [[ "$has_reviewer" == false ]]; then
-        echo "No reviewers available (need at least one of: claude, codex, gemini)" >&2
-        exit 1
-    fi
 }
 
 # --- Determine artifact path ---
@@ -151,7 +145,7 @@ spawn_reviewer() {
         claude)
             # Claude: use --allowedTools "" for read-only
             (
-                nohup setsid /usr/bin/claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1
+                nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1
                 touch "$sentinel_file"
             ) &
             ;;
@@ -241,7 +235,7 @@ main() {
 
     for reviewer in claude codex gemini; do
         local pid
-        if pid=$(spawn_reviewer "$reviewer" "$reviewer" "$prompt" 2>/dev/null); then
+        if pid=$(spawn_reviewer "$reviewer" "$reviewer" "$prompt"); then
             reviewers_json=$(echo "$reviewers_json" | jq \
                 --arg name "$reviewer" \
                 --arg pid "$pid" \
