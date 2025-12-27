@@ -18,6 +18,14 @@ If input is missing critical context (scope, expected behavior, or affected area
 Use the **beads skill** for this task. Produce bd-ready issues and dependency links.  
 Execute the `bd` commands to create issues and dependencies (don’t just print them).
 
+## De-duplication Requirement (Read Existing Issues First)
+
+- **First, read open issues** in Beads before creating anything. Use `bd list --status open` (and also check `in_progress`/`blocked` if needed) to see what already exists.
+- **For each candidate issue**, search for overlaps using `bd search`, `bd list --title-contains`, and/or `bd list --desc-contains`.
+- **Only create a new issue if no existing issue matches the scope.**
+- **If an existing issue matches but you have more context**, append it to the issue’s **description** (preserve existing content). Use `bd show <id> --json` to fetch the current description, then `bd update <id> --description "<old description>\n\n[Added Context]\n...">`.
+- If a matching issue exists and there’s **no new context**, skip creation and note it in the Method block.
+
 ## Prompting Principles (Best Practices)
 
 - **Be grounded**: Only create issues supported by the provided review/plan. If uncertain, say "Needs verification."
@@ -37,12 +45,23 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 
 ## Sizing Rules
 
-- Each issue must be completable by a single agent within **100k tokens**.
-- If a task would exceed **100k tokens**, split it into a **parent epic** plus child issues.
-- Use **parent-child dependencies** when splitting into an epic with children.
-- Each issue should touch **1–2 primary files** whenever possible.
-- If a change spans 3+ files, consider a coordinating epic and split by file/domain.
-- **Epic default**: when creating 3+ related issues from a single review/plan scope, first create an umbrella epic for that scope and attach all issues (or sub-epics) as parent-child dependencies. If a sub-area needs 3+ issues, create a sub-epic and attach it to the umbrella epic.
+- Each issue must be completable by a single agent within **140k tokens** (staying under 75% of context window to preserve reasoning quality).
+- If a task would exceed **140k tokens**, split it into a **parent epic** plus child issues.
+- Each issue should touch **2–3 primary files** whenever possible.
+- If a change spans 4+ files, consider a coordinating epic and split by file/domain.
+- **Prefer fewer, larger issues** over many small ones — agent startup overhead is significant, so combining related work reduces total cost.
+- **Epic default**: when creating 3+ related issues from a single review/plan scope, first create an umbrella epic for organization.
+
+## Epic and Parent-Child Rules
+
+**Use `--parent` flag for hierarchical relationships, NOT `bd dep add`.**
+
+- When creating child issues under an epic, use: `bd create "Title" --parent <epic-id> ...`
+- Parent-child is for **organization/hierarchy**, not blocking
+- **Do NOT** use `bd dep add` between epics and their children
+- **Only use `bd dep add` for blocking dependencies** between sibling tasks that have:
+  - File overlap (same file edited by both)
+  - Logical ordering (task B needs output/types from task A)
 
 ## Parallelization Rules
 
@@ -120,16 +139,27 @@ Notes for Agent:
 
 After the issue specs, **run bd commands** in this order:
 
-1) `bd create` commands in the same order as the issue list  
-2) `bd label add` commands (if labels specified)  
-3) `bd dep add` commands for dependencies
+1) `bd update --description` commands for any **existing** issues that need added context  
+2) `bd create` commands in the same order as the issue list  
+3) `bd label add` commands (if labels specified)  
+4) `bd dep add` commands for dependencies
 
 Use **issue handles as placeholders** for IDs:
 
 ```
-bd create "Title..." -p 1 --type bug --description "..."
+# Create epic first
+bd create "Epic: Feature X" -p 1 --type epic --description "..."
+# returns: EPIC-ID
+
+# Create child issues with --parent
+bd create "Child task 1" -p 1 --type task --parent EPIC-ID --description "..."
 # returns: ISSUE-A
-bd dep add ISSUE-B ISSUE-A
+
+bd create "Child task 2" -p 1 --type task --parent EPIC-ID --description "..."
+# returns: ISSUE-B
+
+# Only use bd dep add for blocking deps between siblings
+bd dep add ISSUE-B ISSUE-A  # B is blocked by A (file overlap or logical order)
 ```
 
 ## Quality Checks Before Finalizing
@@ -142,4 +172,4 @@ bd dep add ISSUE-B ISSUE-A
 - Every issue has clear acceptance criteria and test plan
 - TDD included when appropriate
 - All issues are grounded in the provided input; if input has `Confidence: Low` or `Medium`, add "Needs verification" to Context
-- Each issue is within the 100k-token limit (otherwise split into epic + children)
+- Each issue is within the 140k-token limit (otherwise split into epic + children)
