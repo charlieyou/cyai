@@ -5,6 +5,13 @@
 #
 # Updates .review/gate-state.json to mark the gate as resolved,
 # allowing the Stop hook to permit session termination.
+#
+# Acceptance criteria:
+# - Accepts decision argument: proceed, revise, or abort
+# - Updates .review/gate-state.json status to "resolved"
+# - Records decision action and timestamp
+# - Validates decision argument
+# - Handles missing state file gracefully (exits 0)
 
 set -euo pipefail
 
