@@ -32,8 +32,8 @@ STATE_FILE="$PROJECT_ROOT/.review/gate-state.json"
 
 # Check if state file exists
 if [[ ! -f "$STATE_FILE" ]]; then
-    echo "Error: No active review gate (missing $STATE_FILE)" >&2
-    exit 1
+    echo "No active review gate" >&2
+    exit 0
 fi
 
 # Check for jq dependency
