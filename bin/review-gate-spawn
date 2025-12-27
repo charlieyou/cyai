@@ -145,12 +145,14 @@ PROMPT
 # Returns 0 on success (reviewer spawned), 1 on failure (CLI not found)
 # Completion is tracked via .done sentinel files, not PIDs
 # Sentinel is only created if the reviewer CLI exits successfully
+# A .failed marker is created on non-zero exit to prevent stalling
 spawn_reviewer() {
     local name="$1"
     local cmd="$2"
     local prompt="$3"
     local output_file="$REVIEWS_DIR/${name}.json"
     local sentinel_file="$REVIEWS_DIR/${name}.done"
+    local failed_file="$REVIEWS_DIR/${name}.failed"
 
     # [AC3] Skip missing CLIs with warning
     if ! command -v "$cmd" >/dev/null; then
@@ -161,23 +163,35 @@ spawn_reviewer() {
     case "$name" in
         claude)
             # [AC5] nohup setsid ensures background processes survive script exit
-            # [AC6] .done sentinel file created only on successful completion
+            # [AC6] .done sentinel on success, .failed marker on failure
             (
-                nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1 && touch "$sentinel_file"
+                if nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1; then
+                    touch "$sentinel_file"
+                else
+                    touch "$failed_file"
+                fi
             ) &
             ;;
         codex)
             # [AC5] nohup setsid ensures background processes survive script exit
-            # [AC6] .done sentinel file created only on successful completion
+            # [AC6] .done sentinel on success, .failed marker on failure
             (
-                nohup setsid codex exec -s read-only "$prompt" > "$output_file" 2>&1 && touch "$sentinel_file"
+                if nohup setsid codex exec -s read-only "$prompt" > "$output_file" 2>&1; then
+                    touch "$sentinel_file"
+                else
+                    touch "$failed_file"
+                fi
             ) &
             ;;
         gemini)
             # [AC5] nohup setsid ensures background processes survive script exit
-            # [AC6] .done sentinel file created only on successful completion
+            # [AC6] .done sentinel on success, .failed marker on failure
             (
-                echo "$prompt" | nohup setsid gemini -s > "$output_file" 2>&1 && touch "$sentinel_file"
+                if echo "$prompt" | nohup setsid gemini -s > "$output_file" 2>&1; then
+                    touch "$sentinel_file"
+                else
+                    touch "$failed_file"
+                fi
             ) &
             ;;
         *)
