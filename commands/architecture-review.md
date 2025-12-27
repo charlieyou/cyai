@@ -69,7 +69,8 @@ When in doubt, prioritize:
 
 1. **Map boundaries** (quick pass): entry points, public APIs, services, and core domains
 2. **Trace dependency flow**: identify layers and check for dependency inversions
-3. **Run hotspot tools** (if available): use metrics to rank candidates before deep-diving
+3. **Run hotspot tools** (if available): use metrics to rank candidates before deep-diving. If `lizard` is installed, run it first and pick your first 3–5 deep dives from its output.
+3b. **Run dependency exploration** (if available): in Python repos, use `arch-grimp-*` helpers (or raw `grimp`) to map the import graph (fan-in/out, boundary leaks, cycles). Only enforce layer rules if the repo already defines them or you can state a tentative layering in the review.
 4. **Validate reachability**: ensure hotspots are on real execution paths; skip dead code
 
 Stop traversal once you have enough evidence to populate the top 6–12 issues.
@@ -81,7 +82,7 @@ Stop traversal once you have enough evidence to populate the top 6–12 issues.
 Use tools to **rank** hotspots before deeper analysis.
 
 ### Complexity & Size
-- Use **lizard** (or similar) to list functions with high complexity and length.
+- Prefer **lizard** as the first-pass complexity/size tool when available. If it’s not installed, explicitly note that in the Method block and fall back to file-size ranking.
 - Suggested thresholds (tune to language):
   - Cyclomatic complexity >= **15**
   - Function length >= **80** lines
@@ -91,6 +92,28 @@ Example commands (adjust extensions/paths):
 ```bash
 lizard -C 15 -L 80 -w src
 rg --files -g '*.{ts,js,py,go,java,kt,rb,cs}' | xargs wc -l | sort -nr | head -n 20
+```
+
+Optional (keep output manageable; adjust path/filters):
+```bash
+# Limit to top 15 functions
+lizard -C 15 -L 80 -w src | head -n 20
+```
+
+### Dependency Exploration (Python)
+- Prefer **arch-grimp** helper scripts (if available) to explore the import graph before choosing layers. They bootstrap a shared venv in `~/ai-configs/skills/grimp-architecture/.venv`.
+- Use the `grimp-architecture` skill for packaging setup, helper usage, and incremental enforcement workflow.
+- Start with **structure + fan-in/out**: identify top-level packages, modules that import too much, and modules imported by too many others.
+- Use **shortest-chain** queries to confirm how a boundary is being crossed.
+- If the repo already defines layers (or you can articulate a tentative layering), optionally run a layer check and record violations.
+
+Example (replace `mypackage` and module names to match the repo; use the importable top-level package name):
+```bash
+arch-grimp-explore mypackage
+arch-grimp-path mypackage.validation mypackage.orchestrator
+arch-grimp-layers --layer mypackage.api --layer mypackage.domain --layer mypackage.infra
+arch-grimp-layers --layer mypackage.api --layer mypackage.domain --layer mypackage.infra --json > .grimp-baseline.json
+arch-grimp-diff --baseline .grimp-baseline.json --layer mypackage.api --layer mypackage.domain --layer mypackage.infra
 ```
 
 ### Duplicate Code
@@ -168,7 +191,7 @@ Before marking an issue as High or above:
 
 ## Output Format
 
-Start with a short **Method** block (3–6 bullets) listing: tools run, entry points reviewed, key files scanned, and assumptions/unknowns.
+Start with a short **Method** block (3–6 bullets) listing: tools run, entry points reviewed, key files scanned, and assumptions/unknowns. If hotspot or dependency tools were attempted (e.g., lizard, grimp), note whether they ran and what they surfaced.
 Recommended bullet labels:
 - Tools run:
 - Entry points:

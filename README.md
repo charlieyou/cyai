@@ -52,6 +52,15 @@ DEFAULT_ENABLED=()
 - With toggle flags → uses `--strict-mcp-config` (only specified servers, ignores settings.json)
 - No config file → wrapper passes through to real claude (toggle flags ignored)
 
+### Grimp helpers
+
+Architecture exploration and layer checks for Python projects:
+
+- `arch-grimp-explore` - fan-in/out + structure summary
+- `arch-grimp-path` - shortest import chain between modules
+- `arch-grimp-layers` - layer violation check (CI-friendly)
+- `arch-grimp-diff` - compare current violations to a baseline
+
 ## Skills
 
 | Skill | Description |
@@ -60,6 +69,7 @@ DEFAULT_ENABLED=()
 | `databricks-jobs` | Manage Databricks Jobs via CLI (create, run, monitor, delete jobs) |
 | `databricks-sql` | Execute SQL queries against Databricks SQL Warehouses |
 | `databricks-unity-catalog` | Manage Unity Catalog via Databricks CLI (catalogs, schemas, tables, volumes) |
+| `grimp-architecture` | Explore Python import graphs and enforce layered architecture using grimp helpers |
 | `pyspark-style` | PySpark code style and best practices for DataFrame API |
 
 ## Commands
