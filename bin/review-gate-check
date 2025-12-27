@@ -1,0 +1,310 @@
+#!/usr/bin/env bash
+# review-gate-check - Stop hook for multi-model review gate
+#
+# Reads Stop hook JSON from stdin and manages the review gate lifecycle:
+# 1. Allows resolve command through (prevents deadlock)
+# 2. Exits 0 if no artifact exists
+# 3. Spawns reviewers if artifact exists but no state file
+# 4. Reports progress if reviewers still running
+# 5. Presents formatted results when all complete
+# 6. Handles stale state (>30 min) by cleaning up
+#
+# Acceptance Criteria Implementation:
+# - [AC1] Exits 0 immediately if resolve command detected: L50-53
+# - [AC2] Exits 0 if no .review/latest.md exists: L58-60
+# - [AC3] Spawns reviewers if artifact exists but no state file: L62-68
+# - [AC4] Reports progress if reviewers still running: check_progress() L95-133
+# - [AC5] Presents formatted results table when all complete: format_results() L168-228
+# - [AC6] Handles stale state (>30 min) by cleaning up: L74-82
+# - [AC7] NEEDS_WORK and FAIL verdicts require user decision: calculate_consensus() L135-166
+# - [AC8] Strips markdown code fences from JSON responses: extract_json() L84-93
+# - [AC9] Uses absolute paths: L24-27
+
+set -euo pipefail
+
+# [AC9] Resolve project root via $CLAUDE_PROJECT_DIR or git root
+PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+REVIEW_DIR="$PROJECT_ROOT/.review"
+STATE_FILE="$REVIEW_DIR/gate-state.json"
+REVIEWS_DIR="$REVIEW_DIR/reviews"
+ARTIFACT_FILE="$REVIEW_DIR/latest.md"
+
+# Read stop hook input from stdin
+INPUT=$(cat)
+
+# --- Helper: Output block JSON ---
+output_block() {
+    local reason="$1"
+    jq -n --arg reason "$reason" '{"decision": "block", "reason": $reason}'
+    exit 0
+}
+
+# --- Helper: Output allow (exit 0 with no output) ---
+output_allow() {
+    exit 0
+}
+
+# --- [AC1] Allowlist resolve command to prevent deadlock ---
+PENDING_CMD=$(echo "$INPUT" | jq -r '.pending_tool_input.command // ""' 2>/dev/null || echo "")
+if [[ "$PENDING_CMD" == *"review-gate-resolve"* ]]; then
+    output_allow
+fi
+
+# --- [AC2] Exit 0 if no artifact exists ---
+if [[ ! -f "$ARTIFACT_FILE" ]]; then
+    output_allow
+fi
+
+# --- [AC3] Artifact exists but no state file → spawn reviewers ---
+if [[ ! -f "$STATE_FILE" ]]; then
+    # Check for spawn script
+    SPAWN_SCRIPT="${PROJECT_ROOT}/bin/review-gate-spawn"
+    if [[ -x "$SPAWN_SCRIPT" ]]; then
+        "$SPAWN_SCRIPT" "$ARTIFACT_FILE" >&2 || true
+        output_block "Review gate spawned. Reviewers are analyzing the artifact..."
+    else
+        # No spawn script available, allow stop
+        output_allow
+    fi
+fi
+
+# --- [AC6] Check for stale state (>30 min = 1800 seconds) ---
+CREATED_AT=$(jq -r '.created_at // ""' "$STATE_FILE" 2>/dev/null || echo "")
+if [[ -n "$CREATED_AT" ]]; then
+    CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
+    NOW_EPOCH=$(date +%s)
+    AGE_SECONDS=$((NOW_EPOCH - CREATED_EPOCH))
+
+    if [[ $AGE_SECONDS -gt 1800 ]]; then
+        rm -f "$STATE_FILE"
+        rm -rf "$REVIEWS_DIR"
+        output_allow
+    fi
+fi
+
+# --- [AC8] Extract JSON from potential markdown code fences ---
+extract_json() {
+    local file="$1"
+    # Try raw JSON first
+    if jq -e . "$file" 2>/dev/null; then
+        return 0
+    fi
+    # Strip markdown code fences and try again
+    sed -n '/^```/,/^```/p' "$file" | sed '1d;$d' | jq -e . 2>/dev/null
+}
+
+# --- Check status ---
+STATUS=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+
+# Already resolved, allow stop
+if [[ "$STATUS" == "resolved" ]]; then
+    output_allow
+fi
+
+# --- [AC4] Check progress of reviewers ---
+check_progress() {
+    local reviewers
+    reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
+
+    local total=0
+    local completed=0
+    local running_list=()
+    local completed_list=()
+
+    for reviewer in $reviewers; do
+        ((total++)) || true
+
+        local sentinel_file="$REVIEWS_DIR/${reviewer}.done"
+        local failed_file="$REVIEWS_DIR/${reviewer}.failed"
+        local output_file="$REVIEWS_DIR/${reviewer}.json"
+
+        if [[ -f "$sentinel_file" ]] || [[ -f "$failed_file" ]]; then
+            ((completed++)) || true
+            completed_list+=("$reviewer")
+        else
+            running_list+=("$reviewer")
+        fi
+    done
+
+    if [[ $completed -lt $total ]]; then
+        local progress_msg="Review gate: ${completed}/${total} reviewers complete."
+        if [[ ${#running_list[@]} -gt 0 ]]; then
+            progress_msg+=" Waiting for: ${running_list[*]}"
+        fi
+        output_block "$progress_msg"
+    fi
+
+    # All complete, return to continue processing
+    return 0
+}
+
+# --- [AC7] Calculate consensus ---
+calculate_consensus() {
+    local reviewers
+    reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
+
+    local pass_count=0
+    local fail_count=0
+    local other_count=0
+    local total_confidence=0
+    local reviewer_count=0
+
+    for reviewer in $reviewers; do
+        local output_file="$REVIEWS_DIR/${reviewer}.json"
+        local failed_file="$REVIEWS_DIR/${reviewer}.failed"
+
+        # Skip if reviewer failed
+        if [[ -f "$failed_file" ]]; then
+            ((other_count++)) || true
+            ((reviewer_count++)) || true
+            continue
+        fi
+
+        if [[ ! -f "$output_file" ]]; then
+            ((other_count++)) || true
+            ((reviewer_count++)) || true
+            continue
+        fi
+
+        local result
+        result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+
+        local verdict
+        verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+
+        local confidence
+        confidence=$(echo "$result" | jq -r '.confidence // 0' 2>/dev/null || echo "0")
+
+        case "$verdict" in
+            PASS)
+                ((pass_count++)) || true
+                ;;
+            FAIL)
+                ((fail_count++)) || true
+                ;;
+            NEEDS_WORK|*)
+                ((other_count++)) || true
+                ;;
+        esac
+
+        total_confidence=$(echo "$total_confidence + $confidence" | bc)
+        ((reviewer_count++)) || true
+    done
+
+    # Calculate average confidence
+    local avg_confidence=0
+    if [[ $reviewer_count -gt 0 ]]; then
+        avg_confidence=$(echo "scale=2; $total_confidence / $reviewer_count" | bc)
+    fi
+
+    # Determine if auto-approval is possible
+    # Must have exactly 3 reviewers for auto-approval
+    if [[ $reviewer_count -ne 3 ]]; then
+        echo "requires_decision"
+        return
+    fi
+
+    # Any FAIL → require user decision
+    if [[ $fail_count -gt 0 ]]; then
+        echo "requires_decision"
+        return
+    fi
+
+    # 3/3 PASS → auto-approve
+    if [[ $pass_count -eq 3 ]]; then
+        echo "auto_approve"
+        return
+    fi
+
+    # 2/3 PASS with confidence ≥0.7 AND no FAIL → auto-approve
+    if [[ $pass_count -eq 2 ]] && [[ $fail_count -eq 0 ]]; then
+        local threshold_met
+        threshold_met=$(echo "$avg_confidence >= 0.7" | bc)
+        if [[ "$threshold_met" == "1" ]]; then
+            echo "auto_approve"
+            return
+        fi
+    fi
+
+    # Otherwise require decision
+    echo "requires_decision"
+}
+
+# --- [AC5] Format results table ---
+format_results() {
+    local reviewers
+    reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
+
+    local table="## Review Results\n\n"
+    table+="| Reviewer | Verdict | Confidence | Summary |\n"
+    table+="|----------|---------|------------|--------|\n"
+
+    for reviewer in $reviewers; do
+        local output_file="$REVIEWS_DIR/${reviewer}.json"
+        local failed_file="$REVIEWS_DIR/${reviewer}.failed"
+
+        local verdict="UNCLEAR"
+        local confidence="-"
+        local summary="No response"
+
+        if [[ -f "$failed_file" ]]; then
+            verdict="ERROR"
+            summary="Reviewer process failed"
+        elif [[ -f "$output_file" ]]; then
+            local result
+            result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+
+            verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+            confidence=$(echo "$result" | jq -r '.confidence // "-"' 2>/dev/null || echo "-")
+            summary=$(echo "$result" | jq -r '.summary // "No summary"' 2>/dev/null || echo "No summary")
+
+            # Truncate long summaries
+            if [[ ${#summary} -gt 60 ]]; then
+                summary="${summary:0:57}..."
+            fi
+        fi
+
+        table+="| $reviewer | $verdict | $confidence | $summary |\n"
+    done
+
+    echo -e "$table"
+}
+
+# Check if all reviewers are complete
+check_progress
+
+# Calculate consensus
+CONSENSUS=$(calculate_consensus)
+
+# Update state to awaiting_decision
+TEMP_FILE="${STATE_FILE}.tmp.$$"
+trap 'rm -f "$TEMP_FILE"' EXIT
+
+jq --arg status "awaiting_decision" \
+   --arg consensus "$CONSENSUS" \
+   '.status = $status | .consensus = {verdict: $consensus, requires_user_decision: ($consensus == "requires_decision")}' \
+   "$STATE_FILE" > "$TEMP_FILE"
+mv "$TEMP_FILE" "$STATE_FILE"
+
+# Format output
+RESULTS=$(format_results)
+
+if [[ "$CONSENSUS" == "auto_approve" ]]; then
+    # Auto-approve: resolve and allow stop
+    review-gate-resolve proceed >&2 || true
+    output_allow
+else
+    # Require user decision
+    REASON="$RESULTS
+
+---
+
+**Action Required**: Please review the results and respond with one of:
+- **PROCEED**: Accept the artifact and continue
+- **REVISE**: Make changes based on feedback
+- **ABORT**: Discard and start over
+
+After deciding, run: \`review-gate-resolve <proceed|revise|abort>\`"
+
+    output_block "$REASON"
+fi

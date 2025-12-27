@@ -37,7 +37,7 @@ Respond with one of:
 
 ### 4. Resolve
 
-After deciding, run:
+After deciding, use the Bash tool to run:
 
 ```bash
 ~/.local/bin/review-gate-resolve <decision>
