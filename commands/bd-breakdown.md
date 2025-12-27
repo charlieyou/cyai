@@ -22,6 +22,7 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 
 - **Be grounded**: Only create issues supported by the provided review/plan. If uncertain, say "Needs verification."
 - **Be explicit**: State assumptions and missing context up front.
+- **Be complete on interfaces**: When a task involves one side of a protocol (producer or consumer), ensure the other side is also covered.
 - **Be atomic**: One issue = one clear outcome; avoid bundling unrelated fixes.
 - **Be parallel-first**: Avoid file overlap unless strictly required.
 - **Be consistent**: Use stable priority mapping and uniform wording.
@@ -137,6 +138,7 @@ bd dep add ISSUE-B ISSUE-A
 - **No two parallel issues edit the same file** — if they touch the same file, one MUST depend on the other
 - **Verify every file appears in at most one independent issue** — scan the "Primary files" lists and ensure no file is listed in two issues that lack a dependency chain between them
 - Dependencies must be complete: when uncertain, add the dependency (too many is safer than too few)
+- **Protocol completeness**: For any issue that parses/receives signals (log markers, config flags, env vars), verify a corresponding issue exists for the component that produces those signals. For prompt-driven agent behavior, ensure the relevant prompt file (e.g., `src/prompts/implementer_prompt.md`) has a task to document the expected behavior.
 - Every issue has clear acceptance criteria and test plan
 - TDD included when appropriate
 - All issues are grounded in the provided input; if input has `Confidence: Low` or `Medium`, add "Needs verification" to Context

@@ -69,6 +69,7 @@ DEFAULT_ENABLED=()
 | `bd-breakdown` | Convert a review or feature plan into small, parallelizable Beads issues |
 | `bd-implement` | Implement a beads issue end-to-end with quality checks |
 | `bd-parallel` | Continuously process beads issues with parallel subagents |
+| `architecture-review` | Architecture-focused review for high-leverage design improvements |
 | `diary` | Create a structured diary entry from the current session |
 | `healthcheck` | Code health review optimized for AI-generated codebases |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
@@ -78,4 +79,3 @@ DEFAULT_ENABLED=()
 | Agent | Description |
 |-------|-------------|
 | `bd-implementer` | Subagent that implements beads issues end-to-end (used by bd-parallel) |
-
