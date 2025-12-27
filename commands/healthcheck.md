@@ -20,6 +20,7 @@ When in doubt, prioritize:
 
 - Spend ~70% of effort on structural issues, dead code, and correctness
 - Proceed to architecture review only if earlier phases reveal systemic patterns
+- Do **not** file architecture issues here; if systemic, recommend `architecture-review` in Method
 - Stop cataloging a category once you have 3–5 clear examples—the pattern is established
 - Skip Low-severity issues unless they cluster (3+ instances = worth noting)
 - Keep output concise; stop once patterns are clearly established
@@ -108,11 +109,11 @@ These are the failure modes unique to AI-generated code:
 
 ---
 
-### 6. Architecture (only if patterns emerge)
+## Out of Scope (Do Not Report)
 
-- **Inconsistent patterns**: multiple approaches to state management, error handling, DI, logging across similar modules
-- **Missing library opportunities**: hand-rolled HTTP clients, validation, parsing where standard libraries would be clearer and safer
-- **Coupling violations**: UI reaching into DB models, cyclic dependencies, modules knowing too much about each other's internals
+- Cross-module refactors or boundary reshaping (use `architecture-review`)
+- Dependency inversion or layering changes
+- System-wide testability redesigns
 
 ---
 
@@ -149,7 +150,7 @@ For each issue:
 ### [Severity] Short title
 
 **Primary files**: `path/to/file.ts:lines` (list all files touched; approximate lines fine)
-**Category**: Correctness | Dead Code | AI Smell | Structure | Hygiene | Architecture | Config Drift
+**Category**: Correctness | Dead Code | AI Smell | Structure | Hygiene | Config Drift
 **Type**: bug | task | chore (use bug for broken behavior, task for refactors, chore for cleanup)
 **Confidence**: High | Medium | Low
 **Context**:

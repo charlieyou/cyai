@@ -6,7 +6,7 @@ description: Architecture-focused review for high-leverage design improvements a
 
 Perform a **principal-engineer-level** architecture review focused on **high-leverage design improvements**. Optimize for **maximum long-term payoff per hour invested**. Prefer **functional patterns** (pure functions, explicit data flow, composition) unless the codebase clearly benefits from OO constructs.
 
-This is not a correctness bug hunt. Only flag correctness issues if they block architectural change or reveal systemic design flaws.
+This is not a correctness bug hunt. Only flag correctness issues if they block architectural change or reveal systemic design flaws. Assume a healthcheck already covered dead code, AI smells, hygiene, and missing tests.
 
 > **Downstream**: This output feeds directly into `/bd-breakdown` for ticket creation.
 
@@ -59,6 +59,9 @@ When in doubt, prioritize:
 - Single-use code that's appropriately inlined
 - Test coverage gaps (unless they indicate untestable design)
 - Performance micro-optimizations without measured impact
+- Dead code, ghost features, or AI-specific API misuse
+- Hygiene cleanup (debug logs, stale TODOs, build artifacts)
+- Correctness bugs unless they directly block the architectural change
 
 ---
 
