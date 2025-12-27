@@ -233,3 +233,15 @@ If no high-leverage issues are found, still provide the Method block and output:
 
 The architecture review found no issues meeting the severity threshold. [Brief note about what was checked and any positive observations about the codebase structure.]
 ```
+
+---
+
+## Final Step
+
+After completing the review, use the Write tool to save this entire review output to `.review/latest.md`:
+
+```
+Write the complete review above to .review/latest.md
+```
+
+This enables automatic review gate validation if configured.

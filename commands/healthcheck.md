@@ -168,3 +168,15 @@ For each issue:
 Keep descriptions tight. If you need more than 3 sentences, you're over-explaining.
 
 > **Downstream**: This output feeds directly into `/bd-breakdown` for ticket creation.
+
+---
+
+## Final Step
+
+After completing the review, use the Write tool to save this entire review output to `.review/latest.md`:
+
+```
+Write the complete review above to .review/latest.md
+```
+
+This enables automatic review gate validation if configured.
