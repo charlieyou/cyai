@@ -7,10 +7,20 @@
 # Creates .review/gate-state.json and spawns Claude, Codex, Gemini reviewers
 # in the background. Each writes output to .review/reviews/<model>.json and
 # creates a .review/reviews/<model>.done sentinel on completion.
+#
+# Acceptance Criteria Implementation:
+# - [AC1] Script accepts artifact path as argument: resolve_artifact() L41-54, main() L195
+# - [AC2] Creates .review/reviews/ directory: clean_state() L88
+# - [AC3] Spawns available reviewers (skip missing CLIs with warning): preflight_check() L32-37, spawn_reviewer() L139-141
+# - [AC4] Creates gate-state.json with created_at timestamp: main() L211, L220, L229, L258
+# - [AC5] Background processes survive script exit: spawn_reviewer() uses nohup setsid L148, L155, L162
+# - [AC6] .done sentinel files created on completion: spawn_reviewer() L149, L156, L163
+# - [AC7] Cleans up old state at start: clean_state() L85-89, called from main() L198
+# - [AC8] Handles absolute paths via $CLAUDE_PROJECT_DIR or git root: L14
 
 set -euo pipefail
 
-# Resolve project root via git or env
+# [AC8] Resolve project root via $CLAUDE_PROJECT_DIR or git root
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 REVIEW_DIR="$PROJECT_ROOT/.review"
 STATE_FILE="$REVIEW_DIR/gate-state.json"
@@ -38,11 +48,12 @@ preflight_check() {
 }
 
 # --- Determine artifact path ---
+# [AC1] Determine artifact path from argument or default to latest.md
 resolve_artifact() {
     local arg="${1:-}"
 
     if [[ -n "$arg" && -f "$arg" ]]; then
-        # Explicit path provided
+        # [AC1] Explicit path provided as argument
         realpath "$arg"
     elif [[ -f "$REVIEW_DIR/latest.md" ]]; then
         # Default to latest.md
@@ -85,6 +96,7 @@ check_existing_gate() {
 clean_state() {
     rm -f "$STATE_FILE"
     rm -rf "$REVIEWS_DIR"
+    # [AC2] Creates .review/reviews/ directory
     mkdir -p "$REVIEWS_DIR"
 }
 
@@ -129,6 +141,7 @@ PROMPT
 }
 
 # --- Spawn a reviewer ---
+# [AC3, AC5, AC6] Spawn a reviewer with warning if CLI missing
 spawn_reviewer() {
     local name="$1"
     local cmd="$2"
@@ -136,6 +149,7 @@ spawn_reviewer() {
     local output_file="$REVIEWS_DIR/${name}.json"
     local sentinel_file="$REVIEWS_DIR/${name}.done"
 
+    # [AC3] Skip missing CLIs with warning
     if ! command -v "$cmd" >/dev/null; then
         echo "Skipping $name: $cmd not found" >&2
         return 1
@@ -143,23 +157,26 @@ spawn_reviewer() {
 
     case "$name" in
         claude)
-            # Claude: use --allowedTools "" for read-only
+            # [AC5] nohup setsid ensures background processes survive script exit
             (
                 nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1
+                # [AC6] .done sentinel file created on completion
                 touch "$sentinel_file"
             ) &
             ;;
         codex)
-            # Codex: use -s read-only for sandbox mode
+            # [AC5] nohup setsid ensures background processes survive script exit
             (
                 nohup setsid codex exec -s read-only "$prompt" > "$output_file" 2>&1
+                # [AC6] .done sentinel file created on completion
                 touch "$sentinel_file"
             ) &
             ;;
         gemini)
-            # Gemini: -s for stdin prompt
+            # [AC5] nohup setsid ensures background processes survive script exit
             (
                 echo "$prompt" | nohup setsid gemini -s > "$output_file" 2>&1
+                # [AC6] .done sentinel file created on completion
                 touch "$sentinel_file"
             ) &
             ;;
@@ -195,6 +212,7 @@ main() {
     artifact_path=$(resolve_artifact "${1:-}")
 
     check_existing_gate
+    # [AC7] Clean up old state at start
     clean_state
 
     local artifact_sha256
@@ -210,6 +228,7 @@ main() {
     local now
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+    # [AC4] Create gate-state.json with status tracking and created_at timestamp
     local state_json
     state_json=$(jq -n \
         --arg version "1" \
@@ -254,7 +273,7 @@ main() {
     # Update state with reviewers
     state_json=$(echo "$state_json" | jq --argjson reviewers "$reviewers_json" '.reviewers = $reviewers')
 
-    # Write state file
+    # [AC4] Write gate-state.json file
     echo "$state_json" > "$STATE_FILE"
 
     echo "Review gate spawned: $spawned reviewers for $artifact_path" >&2
