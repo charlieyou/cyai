@@ -61,6 +61,136 @@ Architecture exploration and layer checks for Python projects:
 - `arch-grimp-layers` - layer violation check (CI-friendly)
 - `arch-grimp-diff` - compare current violations to a baseline
 
+## Review Gate
+
+Multi-model consensus review system that gates Claude Code session termination until artifacts are reviewed and approved.
+
+### Purpose
+
+When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), the review gate:
+1. Spawns three AI reviewers (Claude, Codex, Gemini) to analyze the artifact in parallel
+2. Blocks session termination until all reviewers complete
+3. Presents a consensus table with verdicts (PASS/FAIL/NEEDS_WORK)
+4. Requires you to decide: PROCEED, REVISE, or ABORT
+
+This ensures AI-generated artifacts get multi-perspective review before you act on them.
+
+### How It Works
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│ Artifact saved  │────▶│ Stop hook fires  │────▶│ Spawn reviewers │
+│ .review/latest  │     │ review-gate-check│     │ claude/codex/gem│
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+                                                          │
+┌─────────────────┐     ┌──────────────────┐              ▼
+│ Session allowed │◀────│ User resolves    │◀────────────────────────
+│ to terminate    │     │ proceed/revise   │     Reviews complete,
+└─────────────────┘     └──────────────────┘     results presented
+```
+
+**Automatic flow:**
+1. Commands like `/healthcheck` save artifacts to `.review/latest.md`
+2. When Claude tries to stop, the Stop hook detects the artifact
+3. Reviewers spawn in background, hook blocks with "Reviewers analyzing..."
+4. Once complete, hook presents results table and prompts for decision
+5. You run `review-gate-resolve proceed` (or revise/abort) to unblock
+
+**Auto-approval:** If all 3 reviewers return PASS (or 2/3 PASS with ≥70% confidence), the gate auto-approves.
+
+### Usage
+
+**Via command (manual trigger):**
+```bash
+/review-gate path/to/artifact.md
+```
+
+**Via Stop hook (automatic):**
+Any command that writes to `.review/latest.md` triggers the gate when Claude stops.
+
+**Resolving the gate:**
+```bash
+review-gate-resolve proceed   # Accept and continue
+review-gate-resolve revise    # Make changes, re-review later
+review-gate-resolve abort     # Discard the artifact
+```
+
+### Prerequisites
+
+1. Run `./link-all.sh` to install the review-gate scripts to `~/.local/bin/`
+2. Ensure `~/.local/bin` is in your PATH
+3. Have `claude`, `codex`, and/or `gemini` CLIs installed (missing ones are skipped with warning)
+
+### Hook Configuration
+
+Add the following Stop hook to your `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "~/.local/bin/review-gate-check",
+          "timeout": 60
+        }]
+      }
+    ]
+  }
+}
+```
+
+#### Merging with Existing Configuration
+
+If you already have a `hooks` key in your settings.json, add the Stop array to it:
+
+```json
+{
+  "hooks": {
+    "ExistingHook": [...],
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "~/.local/bin/review-gate-check",
+          "timeout": 60
+        }]
+      }
+    ]
+  }
+}
+```
+
+### Verification
+
+After adding the configuration:
+
+1. Start a new Claude Code session
+2. Run `/healthcheck` to generate a review artifact
+3. Verify the review gate triggers when Claude stops
+4. Confirm the PROCEED/REVISE/ABORT flow works correctly
+
+### Timeout
+
+The 60-second timeout is sufficient for the check script to:
+- Detect review artifacts
+- Spawn reviewer processes (if needed)
+- Check reviewer progress
+- Present results
+
+If you experience timeouts with slow network connections, you can increase this value.
+
+### Scripts
+
+The review gate system uses these scripts in `~/.local/bin/`:
+
+| Script | Purpose |
+|--------|---------|
+| `review-gate-check` | Stop hook that manages the review gate lifecycle |
+| `review-gate-spawn` | Spawns reviewer processes for each model |
+| `review-gate-resolve` | Resolves the gate with proceed/revise/abort |
+
 ## Skills
 
 | Skill | Description |
@@ -83,6 +213,7 @@ Architecture exploration and layer checks for Python projects:
 | `diary` | Create a structured diary entry from the current session |
 | `healthcheck` | Code health review optimized for AI-generated codebases |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
+| `review-gate` | Multi-model consensus review with user approval gate |
 
 ## Agents
 
