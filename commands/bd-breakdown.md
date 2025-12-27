@@ -52,6 +52,28 @@ Execute the `bd` commands to create issues and dependencies (don’t just print 
 - **Prefer fewer, larger issues** over many small ones — agent startup overhead is significant, so combining related work reduces total cost.
 - **Epic default**: when creating 3+ related issues from a single review/plan scope, first create an umbrella epic for organization.
 
+## Scope Atomicity Rules
+
+**CRITICAL: Bundling too many things in one issue causes agents to skip items.**
+
+- **Count distinct behaviors in the "In:" scope.** If more than 2-3 distinct behaviors are listed (look for semicolons or "and" conjunctions), split into separate issues.
+- **Distinguish "modify existing" vs "add new"**: A single issue should NOT both modify an existing code path AND add a completely new code path. These have different failure modes and should be separate issues.
+- **Phase/gate boundaries**: If implementing a multi-phase system (e.g., Gates 1-4, or before/after hooks), each phase that runs at a different point in execution should be a separate issue.
+- **One outcome per issue**: Each issue should have ONE clear, verifiable outcome. If you need multiple bullet points to describe what "done" looks like, consider splitting.
+
+Example of BAD scope (too many things bundled):
+```
+In: add Gate 1-4 sequencing; enforce clean-git checks; handle no-op resolution;
+    run-level validation in worktree; follow-up issue on failure
+```
+
+Example of GOOD scope (split appropriately):
+```
+Issue A - In: update per-issue gate flow to use check_with_resolution; handle no-op resolution
+Issue B - In: add run-level validation after all issues complete (Gate 4)
+Issue C - In: create follow-up issue when run-level validation fails
+```
+
 ## Epic and Parent-Child Rules
 
 **Use `--parent` flag for hierarchical relationships, NOT `bd dep add`.**
@@ -173,3 +195,6 @@ bd dep add ISSUE-B ISSUE-A  # B is blocked by A (file overlap or logical order)
 - TDD included when appropriate
 - All issues are grounded in the provided input; if input has `Confidence: Low` or `Medium`, add "Needs verification" to Context
 - Each issue is within the 140k-token limit (otherwise split into epic + children)
+- **Scope atomicity**: Each issue's "In:" section has ≤3 tightly related changes; if there are semicolon-separated items, verify they're truly coupled (would break if done separately)
+- **No mixed modify+add**: Issues don't both modify existing code paths AND add new standalone features/phases
+- **Single outcome**: Each issue has ONE verifiable "done" state, not multiple independent outcomes
