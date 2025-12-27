@@ -144,6 +144,7 @@ PROMPT
 # [AC3, AC5, AC6] Spawn a reviewer with warning if CLI missing
 # Returns 0 on success (reviewer spawned), 1 on failure (CLI not found)
 # Completion is tracked via .done sentinel files, not PIDs
+# Sentinel is only created if the reviewer CLI exits successfully
 spawn_reviewer() {
     local name="$1"
     local cmd="$2"
@@ -160,26 +161,23 @@ spawn_reviewer() {
     case "$name" in
         claude)
             # [AC5] nohup setsid ensures background processes survive script exit
+            # [AC6] .done sentinel file created only on successful completion
             (
-                nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1
-                # [AC6] .done sentinel file created on completion
-                touch "$sentinel_file"
+                nohup setsid claude -p --allowedTools "" "$prompt" > "$output_file" 2>&1 && touch "$sentinel_file"
             ) &
             ;;
         codex)
             # [AC5] nohup setsid ensures background processes survive script exit
+            # [AC6] .done sentinel file created only on successful completion
             (
-                nohup setsid codex exec -s read-only "$prompt" > "$output_file" 2>&1
-                # [AC6] .done sentinel file created on completion
-                touch "$sentinel_file"
+                nohup setsid codex exec -s read-only "$prompt" > "$output_file" 2>&1 && touch "$sentinel_file"
             ) &
             ;;
         gemini)
             # [AC5] nohup setsid ensures background processes survive script exit
+            # [AC6] .done sentinel file created only on successful completion
             (
-                echo "$prompt" | nohup setsid gemini -s > "$output_file" 2>&1
-                # [AC6] .done sentinel file created on completion
-                touch "$sentinel_file"
+                echo "$prompt" | nohup setsid gemini -s > "$output_file" 2>&1 && touch "$sentinel_file"
             ) &
             ;;
         *)
