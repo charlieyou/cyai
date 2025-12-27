@@ -15,7 +15,7 @@ Run multi-model consensus review on an artifact. Three reviewers (Claude, Codex,
 
 ### 1. Trigger Review
 
-Run the spawn script to start parallel reviews:
+Use the Bash tool to run the spawn script:
 
 ```bash
 ~/.local/bin/review-gate-spawn "$ARGUMENTS"
