@@ -142,6 +142,8 @@ PROMPT
 
 # --- Spawn a reviewer ---
 # [AC3, AC5, AC6] Spawn a reviewer with warning if CLI missing
+# Returns 0 on success (reviewer spawned), 1 on failure (CLI not found)
+# Completion is tracked via .done sentinel files, not PIDs
 spawn_reviewer() {
     local name="$1"
     local cmd="$2"
@@ -186,7 +188,7 @@ spawn_reviewer() {
             ;;
     esac
 
-    echo $!
+    return 0
 }
 
 # --- Determine trigger source ---
@@ -229,6 +231,7 @@ main() {
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
     # [AC4] Create gate-state.json with status tracking and created_at timestamp
+    # Note: Completion is tracked via .done sentinel files, not PIDs
     local state_json
     state_json=$(jq -n \
         --arg version "1" \
@@ -249,19 +252,19 @@ main() {
         }')
 
     # Spawn reviewers and record in state
+    # Completion tracked via .done sentinels (check for .review/reviews/<name>.done)
     local reviewers_json='{}'
     local spawned=0
 
     for reviewer in claude codex gemini; do
-        local pid
-        if pid=$(spawn_reviewer "$reviewer" "$reviewer" "$prompt"); then
+        if spawn_reviewer "$reviewer" "$reviewer" "$prompt"; then
             reviewers_json=$(echo "$reviewers_json" | jq \
                 --arg name "$reviewer" \
-                --arg pid "$pid" \
                 --arg output "$REVIEWS_DIR/${reviewer}.json" \
-                '.[$name] = {pid: ($pid | tonumber), output_file: $output, completed_at: null, result: null}')
+                --arg sentinel "$REVIEWS_DIR/${reviewer}.done" \
+                '.[$name] = {output_file: $output, sentinel_file: $sentinel, completed_at: null, result: null}')
             spawned=$((spawned + 1))
-            echo "Spawned $reviewer (PID: $pid)" >&2
+            echo "Spawned $reviewer" >&2
         fi
     done
 
