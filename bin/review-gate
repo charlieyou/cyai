@@ -581,10 +581,31 @@ review_gate_resolve() {
 
 review_gate_check() {
     MAX_ITERATIONS=5
-    MAX_WAIT_SECONDS="${REVIEW_GATE_MAX_WAIT_SECONDS:-300}"
+    MAX_WAIT_SECONDS="${REVIEW_GATE_MAX_WAIT_SECONDS:-600}"
     POLL_INTERVAL_SECONDS="${REVIEW_GATE_POLL_INTERVAL_SECONDS:-3}"
 
     INPUT=$(cat)
+    LOG_FILE=""
+
+    log() {
+        local msg="$1"
+        local ts
+        ts=$(date -Iseconds)
+        if [[ -n "$LOG_FILE" ]]; then
+            printf '%s %s\n' "$ts" "$msg" >> "$LOG_FILE"
+        else
+            printf '%s %s\n' "$ts" "$msg" >&2
+        fi
+    }
+
+    setup_log_file() {
+        if [[ -n "${REVIEW_GATE_LOG_FILE:-}" ]]; then
+            LOG_FILE="$REVIEW_GATE_LOG_FILE"
+        else
+            LOG_FILE="$REVIEW_DIR/review-gate.log"
+        fi
+        mkdir -p "$(dirname "$LOG_FILE")"
+    }
 
     # --- Session identification ---
     SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null || echo "")
@@ -604,15 +625,21 @@ review_gate_check() {
         SESSION_SOURCE="input.transcript_path"
     fi
 
+    if [[ -z "$SESSION_ID" ]]; then
+        log "review-gate: missing session_id; allowing stop"
+    fi
+
     # --- Helper: Output block JSON ---
     output_block() {
         local reason="$1"
+        log "review-gate: blocking stop: ${reason:0:200}"
         jq -n --arg reason "$reason" '{"decision": "block", "reason": $reason}'
         exit 0
     }
 
     # --- Helper: Output allow (exit 0 with no output) ---
     output_allow() {
+        log "review-gate: allowing stop"
         exit 0
     }
 
@@ -627,10 +654,21 @@ review_gate_check() {
     REVIEWS_DIR="$REVIEW_DIR/reviews"
     ARTIFACT_FILE="$REVIEW_DIR/latest.md"
     ITERATION_FILE="$REVIEW_DIR/iteration.txt"
+    setup_log_file
+    log "review-gate: session_id=$SESSION_ID"
+    log "review-gate: transcript_path=$TRANSCRIPT_PATH"
+    log "review-gate: review_dir=$REVIEW_DIR"
+    log "review-gate: state_file=$STATE_FILE"
+    log "review-gate: reviews_dir=$REVIEWS_DIR"
+    log "review-gate: artifact_file=$ARTIFACT_FILE"
 
     # --- [AC1] Allowlist resolve command to prevent deadlock ---
     PENDING_CMD=$(echo "$INPUT" | jq -r '.pending_tool_input.command // ""' 2>/dev/null || echo "")
+    if [[ -n "$PENDING_CMD" ]]; then
+        log "review-gate: pending_tool_input.command=$PENDING_CMD"
+    fi
     if [[ "$PENDING_CMD" == *"review-gate resolve"* ]]; then
+        log "review-gate: allow resolve command"
         output_allow
     fi
 
@@ -652,6 +690,7 @@ review_gate_check() {
     spawn_reviewers() {
         local detected_type
         detected_type=$(detect_review_type)
+        log "review-gate: spawn reviewers (type=${detected_type:-none})"
 
         if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
            REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
@@ -663,18 +702,22 @@ review_gate_check() {
                 local status
                 status=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
                 if [[ "$status" == "resolved" ]]; then
+                    log "review-gate: spawn auto-resolved (no reviewers available)"
                     # No reviewers available - spawn auto-resolved
                     output_allow
                 fi
             fi
             # Success: return to caller so it can proceed to polling loop
+            log "review-gate: spawn succeeded"
             return 0
         fi
 
         if ! command -v codex >/dev/null 2>&1 && ! command -v gemini >/dev/null 2>&1; then
+            log "review-gate: reviewers missing; allowing stop"
             output_allow
         fi
 
+        log "review-gate: spawn failed"
         output_block "Review gate error: failed to spawn reviewers. Run review-gate spawn manually to inspect output."
     }
 
@@ -714,76 +757,211 @@ review_gate_check() {
 
     # --- [AC2] Exit 0 if no artifact exists (when no active state) ---
     if [[ ! -f "$STATE_FILE" ]] && [[ ! -f "$ARTIFACT_FILE" ]]; then
+        log "review-gate: no state or artifact; allowing stop"
         output_allow
     fi
 
     # --- If state exists, process it first (supports manual review-gate paths) ---
     if [[ -f "$STATE_FILE" ]]; then
+        log "review-gate: state file exists"
         CREATED_AT=$(jq -r '.created_at // ""' "$STATE_FILE" 2>/dev/null || echo "")
         if [[ -n "$CREATED_AT" ]]; then
             CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
             NOW_EPOCH=$(date +%s)
             AGE_SECONDS=$((NOW_EPOCH - CREATED_EPOCH))
+            log "review-gate: state age ${AGE_SECONDS}s"
 
             if [[ $AGE_SECONDS -gt 1800 ]]; then
+                log "review-gate: cleaning stale state"
                 cleanup_stale_state
                 output_allow
             fi
         fi
         ensure_state_owner
+    else
+        log "review-gate: state file missing"
     fi
 
     # --- [AC8] Extract JSON from potential markdown code fences ---
+    extract_last_json_object() {
+        local file="$1"
+        local debug="${2:-false}"
+        python - "$file" "$debug" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+debug = sys.argv[2] == "true" if len(sys.argv) > 2 else False
+
+text = open(path, "r", errors="ignore").read()
+decoder = json.JSONDecoder()
+
+# Collect all valid JSON objects with their positions
+objects = []
+for i, ch in enumerate(text):
+    if ch not in "{[":
+        continue
+    try:
+        obj, end = decoder.raw_decode(text[i:])
+        # Only collect dict objects (not arrays)
+        if isinstance(obj, dict):
+            objects.append((i, i + end, obj))
+    except Exception:
+        pass
+
+if debug:
+    print(f"DEBUG: Found {len(objects)} JSON objects in file", file=sys.stderr)
+    for idx, (start, end, obj) in enumerate(objects):
+        keys = list(obj.keys())[:5]
+        preview = str(obj)[:100]
+        print(f"DEBUG:   [{idx}] pos={start}-{end} keys={keys} preview={preview}...", file=sys.stderr)
+
+if not objects:
+    if debug:
+        print("DEBUG: No JSON objects found", file=sys.stderr)
+    sys.exit(1)
+
+# Filter to only review-like objects (must have verdict OR be structured_output wrapper)
+review_candidates = []
+for start, end, obj in objects:
+    # Direct review result
+    if "verdict" in obj and obj.get("verdict") in ("PASS", "FAIL", "NEEDS_WORK"):
+        review_candidates.append((start, end, obj))
+    # Codex structured_output wrapper
+    elif "structured_output" in obj:
+        review_candidates.append((start, end, obj))
+    # Gemini response wrapper
+    elif "response" in obj and isinstance(obj.get("response"), str):
+        review_candidates.append((start, end, obj))
+
+if debug:
+    print(f"DEBUG: Found {len(review_candidates)} review candidates", file=sys.stderr)
+
+# Use the LAST review candidate, or fall back to last object
+if review_candidates:
+    result = review_candidates[-1][2]
+    if debug:
+        print(f"DEBUG: Using last review candidate at pos {review_candidates[-1][0]}", file=sys.stderr)
+else:
+    result = objects[-1][2]
+    if debug:
+        print(f"DEBUG: No review candidates, using last object at pos {objects[-1][0]}", file=sys.stderr)
+
+print(json.dumps(result))
+PY
+    }
+
+    unwrap_review_json() {
+        local json="$1"
+        if [[ -z "$json" ]]; then
+            return 1
+        fi
+
+        log "review-gate: unwrap review json (len=${#json})"
+
+        if echo "$json" | jq -e '.structured_output' >/dev/null 2>&1; then
+            json=$(echo "$json" | jq -c '.structured_output' 2>/dev/null || echo "")
+        fi
+
+        if [[ -n "$json" ]] && echo "$json" | jq -e '.response' >/dev/null 2>&1; then
+            local response
+            response=$(echo "$json" | jq -r '.response' 2>/dev/null || echo "")
+            if [[ -n "$response" ]] && echo "$response" | jq -e . >/dev/null 2>&1; then
+                json=$(echo "$response" | jq -c '.' 2>/dev/null || echo "")
+            fi
+        fi
+
+        if [[ -z "$json" ]]; then
+            return 1
+        fi
+
+        echo "$json"
+    }
+
     extract_json() {
         local file="$1"
         local reviewer="$2"
+        local json=""
+        local file_size=""
+
+        if [[ -f "$file" ]]; then
+            file_size=$(wc -c < "$file" 2>/dev/null || echo 0)
+            log "review-gate: extract_json START reviewer=$reviewer file=$file size=$file_size"
+        else
+            log "review-gate: extract_json reviewer=$reviewer MISSING file=$file"
+            return 1
+        fi
 
         case "$reviewer" in
             codex)
-                # Codex: remove markdown code fences if present
-                local json
-                json=$(sed -n '/```json/,/```/p' "$file" | sed '1d;$d')
-                if [[ -z "$json" ]]; then
-                    json=$(sed -n '/```/,/```/p' "$file" | sed '1d;$d')
+                # Codex output is complex - use smart JSON extraction directly
+                # This finds the LAST review-like JSON object in the file
+                log "review-gate: extract_json codex using extract_last_json_object"
+
+                # Capture debug output to log file
+                local debug_output
+                debug_output=$(extract_last_json_object "$file" "true" 2>&1 >/dev/null || true)
+                while IFS= read -r line; do
+                    [[ -n "$line" ]] && log "review-gate: $line"
+                done <<< "$debug_output"
+
+                # Get actual result (without debug)
+                json=$(extract_last_json_object "$file" "false" 2>/dev/null || true)
+
+                if [[ -n "$json" ]]; then
+                    log "review-gate: extract_json codex extracted len=${#json}"
+                    local preview="${json:0:200}"
+                    log "review-gate: extract_json codex preview: $preview"
+                else
+                    log "review-gate: extract_json codex extract_last_json_object FAILED (empty result)"
                 fi
-                if [[ -z "$json" ]]; then
-                    json=$(cat "$file")
-                fi
-                if [[ -z "$json" ]] || ! echo "$json" | jq -e . >/dev/null 2>&1; then
-                    # Fallback: capture JSON after "tokens used" (skipping the count line)
-                    json=$(awk '
-                        $0 == "tokens used" { in=1; next }
-                        in && !started {
-                            if ($0 ~ /^[0-9,]+$/) { next }
-                            if ($0 ~ /^[[:space:]]*[{[]/) { started=1; print; next }
-                            next
-                        }
-                        started { print }
-                    ' "$file")
-                fi
-                if [[ -z "$json" ]] || ! echo "$json" | jq -e . >/dev/null 2>&1; then
-                    # Fallback: find last valid single-line JSON
-                    json=$(tac "$file" | while IFS= read -r line; do
-                        if echo "$line" | jq -e . >/dev/null 2>&1; then
-                            echo "$line"
-                            break
-                        fi
-                    done)
-                fi
-                echo "$json" | jq -c '.'
                 ;;
             gemini)
-                # Gemini: skip first line, parse JSON, extract .response key
-                local json
-                json=$(tail -n +2 "$file" | jq -c '.' 2>/dev/null) || return 1
-                # Extract .response (contains review JSON as string) and parse
-                echo "$json" | jq -r '.response' | jq -c '.'
+                # Gemini: skip first line (status), parse JSON
+                log "review-gate: extract_json gemini trying tail+jq"
+                json=$(tail -n +2 "$file" | jq -c '.' 2>/dev/null || true)
+                if [[ -n "$json" ]]; then
+                    log "review-gate: extract_json gemini tail+jq succeeded len=${#json}"
+                else
+                    log "review-gate: extract_json gemini tail+jq failed, trying extract_last_json_object"
+                    json=$(extract_last_json_object "$file" "false" 2>/dev/null || true)
+                    log "review-gate: extract_json gemini extract_last_json_object len=${#json}"
+                fi
+                if [[ -n "$json" ]]; then
+                    local preview="${json:0:200}"
+                    log "review-gate: extract_json gemini preview: $preview"
+                fi
                 ;;
             *)
                 # Fallback: try raw JSON
-                jq -c '.' "$file" 2>/dev/null || return 1
+                log "review-gate: extract_json $reviewer trying raw jq"
+                json=$(jq -c '.' "$file" 2>/dev/null || true)
                 ;;
         esac
+
+        if [[ -z "$json" ]]; then
+            log "review-gate: extract_json $reviewer NO JSON EXTRACTED"
+            return 1
+        fi
+
+        log "review-gate: extract_json $reviewer before unwrap len=${#json}"
+        if ! json=$(unwrap_review_json "$json" 2>/dev/null); then
+            log "review-gate: extract_json $reviewer unwrap FAILED"
+            return 1
+        fi
+
+        log "review-gate: extract_json $reviewer after unwrap len=${#json}"
+
+        if ! echo "$json" | jq -c '.' >/dev/null 2>&1; then
+            log "review-gate: extract_json $reviewer final jq validation FAILED"
+            return 1
+        fi
+
+        # Log final extracted verdict for debugging
+        local verdict
+        verdict=$(echo "$json" | jq -r '.verdict // "NO_VERDICT"' 2>/dev/null || echo "JQ_ERROR")
+        log "review-gate: extract_json $reviewer SUCCESS verdict=$verdict"
+
+        echo "$json" | jq -c '.'
     }
 
     # --- Get/increment iteration count ---
@@ -819,11 +997,13 @@ review_gate_check() {
 
     # If resolved, allow stop unless a new artifact is present
     if [[ "$STATUS" == "resolved" ]]; then
+        log "review-gate: status resolved"
         if [[ -f "$ARTIFACT_FILE" ]]; then
             STATE_SHA=$(jq -r '.artifact.sha256 // ""' "$STATE_FILE" 2>/dev/null || echo "")
             CURRENT_SHA=$(compute_sha256 "$ARTIFACT_FILE" 2>/dev/null || echo "")
 
             if [[ -n "$STATE_SHA" && -n "$CURRENT_SHA" && "$STATE_SHA" != "$CURRENT_SHA" ]]; then
+                log "review-gate: artifact changed; respawn reviewers"
                 cleanup_stale_state
                 reset_iteration
                 spawn_reviewers
@@ -834,6 +1014,7 @@ review_gate_check() {
 
     # --- Artifact exists but no state file → spawn reviewers ---
     if [[ ! -f "$STATE_FILE" ]]; then
+        log "review-gate: spawning reviewers (no state)"
         spawn_reviewers
     fi
 
@@ -862,6 +1043,7 @@ review_gate_check() {
             fi
         done
 
+        log "review-gate: progress completed=$completed total=$total running=${running_list[*]}"
         echo "$completed|$total|${running_list[*]}"
     }
 
@@ -893,10 +1075,17 @@ review_gate_check() {
             fi
 
             local result
-            result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+            if ! result=$(extract_json "$output_file" "$reviewer" 2>/dev/null); then
+                ((other_count++)) || true
+                ((reviewer_count++)) || true
+                continue
+            fi
 
             local verdict
             verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+            if [[ -z "$verdict" || "$verdict" == "null" ]]; then
+                verdict="UNCLEAR"
+            fi
 
             case "$verdict" in
                 PASS)
@@ -951,11 +1140,24 @@ review_gate_check() {
                 summary="Reviewer process failed"
             elif [[ -f "$output_file" ]]; then
                 local result
-                result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+                if ! result=$(extract_json "$output_file" "$reviewer" 2>/dev/null); then
+                    verdict="ERROR"
+                    summary="Invalid reviewer output"
+                else
+                    verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+                    confidence=$(echo "$result" | jq -r '.confidence // "-"' 2>/dev/null || echo "-")
+                    summary=$(echo "$result" | jq -r '.summary // "No summary"' 2>/dev/null || echo "No summary")
 
-                verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
-                confidence=$(echo "$result" | jq -r '.confidence // "-"' 2>/dev/null || echo "-")
-                summary=$(echo "$result" | jq -r '.summary // "No summary"' 2>/dev/null || echo "No summary")
+                    if [[ -z "$verdict" || "$verdict" == "null" ]]; then
+                        verdict="UNCLEAR"
+                    fi
+                    if [[ -z "$confidence" || "$confidence" == "null" ]]; then
+                        confidence="-"
+                    fi
+                    if [[ -z "$summary" || "$summary" == "null" ]]; then
+                        summary="No summary"
+                    fi
+                fi
 
                 # Truncate long summaries
                 if [[ ${#summary} -gt 60 ]]; then
@@ -986,10 +1188,17 @@ review_gate_check() {
 
             if [[ -f "$output_file" ]]; then
                 local result
-                result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+                if ! result=$(extract_json "$output_file" "$reviewer" 2>/dev/null); then
+                    all_issues+="### $reviewer (ERROR)\n"
+                    all_issues+="Summary: Invalid reviewer output\n\n"
+                    continue
+                fi
 
                 local verdict
                 verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+                if [[ -z "$verdict" || "$verdict" == "null" ]]; then
+                    verdict="UNCLEAR"
+                fi
 
                 # Only collect issues from non-PASS reviews
                 if [[ "$verdict" != "PASS" ]]; then
@@ -1025,6 +1234,7 @@ review_gate_check() {
         IFS='|' read -r COMPLETED TOTAL RUNNING <<< "$PROGRESS"
 
         if [[ "$COMPLETED" -ge "$TOTAL" ]]; then
+            log "review-gate: reviewers complete"
             break
         fi
 
@@ -1036,6 +1246,7 @@ review_gate_check() {
                 if [[ -n "$RUNNING" ]]; then
                     progress_msg+=" Waiting for: $RUNNING"
                 fi
+                log "review-gate: timeout after ${ELAPSED}s"
                 output_block "$progress_msg"
             fi
             sleep "$POLL_INTERVAL_SECONDS"
@@ -1076,6 +1287,7 @@ review_gate_check() {
     else
         # Check iteration limit
         if [[ $CURRENT_ITERATION -ge $MAX_ITERATIONS ]]; then
+            log "review-gate: max iterations reached"
             REASON="$RESULTS
 
 ---
@@ -1099,6 +1311,7 @@ Please manually review and decide:
         # Clean state so reviewers will be re-spawned after revision
         clean_for_rerun
 
+        log "review-gate: revision required; incremented iteration"
         REASON="$RESULTS
 
 ---
