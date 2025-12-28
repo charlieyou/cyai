@@ -140,7 +140,12 @@ Before flagging an issue as Critical or High:
 
 ## Output Format
 
-Start with a short **Method** block (3–6 bullets) listing: tests run, entry points reviewed, key files scanned, and assumptions/unknowns.
+Start the artifact with the review-type marker (required for review gate):
+```
+<!-- review-type: healthcheck -->
+```
+
+Then include a short **Method** block (3–6 bullets) listing: tests run, entry points reviewed, key files scanned, and assumptions/unknowns.
 
 Then produce a **single unified list** of issues, sorted by severity (Critical first, then High, Medium, Low).
 

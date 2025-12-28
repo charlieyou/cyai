@@ -117,6 +117,9 @@ USAGE
 }
 
 review_gate_spawn() {
+    # --- Review type (for template selection) ---
+    REVIEW_TYPE="${REVIEW_TYPE:-}"
+
     # --- Session metadata ---
     OWNER_SESSION_KEY="${REVIEW_GATE_SESSION_KEY:-}"
     OWNER_SOURCE="${REVIEW_GATE_SESSION_SOURCE:-}"
@@ -127,6 +130,14 @@ review_gate_spawn() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --type=*)
+                REVIEW_TYPE="${1#*=}"
+                shift
+                ;;
+            --type)
+                REVIEW_TYPE="${2:-}"
+                shift 2
+                ;;
             --session-id)
                 OWNER_SESSION_ID="${2:-}"
                 shift 2
@@ -240,11 +251,44 @@ USAGE
         mkdir -p "$REVIEWS_DIR"
     }
 
+    # --- Resolve review template ---
+    resolve_template() {
+        local type="$1"
+        local project_root
+        project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+        local search_paths=(
+            "$project_root/.claude/review-prompts/${type}.md"
+            "$HOME/.claude/review-prompts/${type}.md"
+        )
+
+        for path in "${search_paths[@]}"; do
+            if [[ -f "$path" ]]; then
+                cat "$path"
+                return 0
+            fi
+        done
+
+        # Fallback to generic criteria
+        cat <<'DEFAULT'
+## Evaluation Criteria
+1. Completeness - Are all necessary aspects covered?
+2. Accuracy - Are claims grounded in evidence?
+3. Actionability - Are next steps clear and concrete?
+4. Consistency - Any contradictions?
+5. Scope - Appropriately scoped?
+DEFAULT
+    }
+
     # --- Build review prompt ---
     build_prompt() {
         local artifact_path="$1"
+        local review_type="${2:-}"
         local content
         content=$(cat "$artifact_path")
+
+        local criteria
+        criteria=$(resolve_template "$review_type")
 
         cat <<PROMPT
 You are reviewing an artifact for quality and correctness.
@@ -256,12 +300,7 @@ Path: $artifact_path
 $content
 \`\`\`
 
-## Evaluation Criteria
-1. Completeness - Are all necessary aspects covered?
-2. Accuracy - Are claims grounded in evidence?
-3. Actionability - Are next steps clear and concrete?
-4. Consistency - Any contradictions?
-5. Scope - Appropriately scoped?
+$criteria
 
 ## Output Format
 JSON only, no markdown code fences:
@@ -360,8 +399,13 @@ PROMPT
     local trigger_source
     trigger_source=$(determine_source "$artifact_path")
 
+    # Set REVIEW_TYPE from trigger_source if not already set
+    if [[ -z "$REVIEW_TYPE" ]]; then
+        REVIEW_TYPE="$trigger_source"
+    fi
+
     local prompt_file="$REVIEWS_DIR/review.prompt"
-    build_prompt "$artifact_path" > "$prompt_file"
+    build_prompt "$artifact_path" "$REVIEW_TYPE" > "$prompt_file"
 
     # Create JSON schema for structured output
     local schema_file="$REVIEWS_DIR/review-schema.json"
@@ -590,12 +634,29 @@ review_gate_check() {
         output_allow
     fi
 
+    # --- Helper: Detect review type from artifact frontmatter ---
+    detect_review_type() {
+        if [[ -f "$ARTIFACT_FILE" ]]; then
+            local type_from_frontmatter
+            type_from_frontmatter=$(sed -n 's/^<!-- *review-type: *\([^ ]*\) *-->/\1/p' "$ARTIFACT_FILE" | head -1)
+            if [[ -n "$type_from_frontmatter" ]]; then
+                echo "$type_from_frontmatter"
+                return 0
+            fi
+        fi
+        echo ""
+    }
+
     # --- Helper: Spawn reviewers for current artifact ---
     spawn_reviewers() {
+        local detected_type
+        detected_type=$(detect_review_type)
+
         if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
            REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
            REVIEW_GATE_SESSION_ID="$SESSION_ID" \
            REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+           REVIEW_TYPE="$detected_type" \
            "$0" spawn "$ARTIFACT_FILE" >/dev/null 2>&1; then
             if [[ -f "$STATE_FILE" ]]; then
                 local status

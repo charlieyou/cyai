@@ -227,6 +227,46 @@ The review gate system uses these scripts in `~/.local/bin/`:
 |--------|---------|
 | `review-gate` | Multi-model review gate entrypoint (check/spawn/resolve/artifact-path) |
 
+### Type-Specific Review Prompts
+
+The review gate uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved in order:
+
+1. `$PROJECT_ROOT/.claude/review-prompts/<type>.md` (project-local)
+2. `~/.claude/review-prompts/<type>.md` (user-global)
+3. Fallback to generic criteria
+
+**Built-in templates:**
+
+| Type | Template | Used By |
+|------|----------|---------|
+| `healthcheck` | Checks coverage, accuracy, actionability, proportionality | `/healthcheck` |
+| `architecture-review` | Checks insight quality, leverage, feasibility, trade-offs | `/architecture-review` |
+| `code-review` | Checks correctness, security, completeness, false positives | `/code-review` |
+| `plan` | Checks completeness, order of operations, edge cases, scope | Implementation plans |
+
+**Type detection:**
+
+1. Explicit `--type` argument: `review-gate spawn --type=plan artifact.md`
+2. Frontmatter in artifact: `<!-- review-type: healthcheck -->`
+3. Filename pattern (e.g., `healthcheck-*.md` → `healthcheck`)
+
+**Creating custom templates:**
+
+Create a markdown file in `.claude/review-prompts/<type>.md`:
+
+```markdown
+## Evaluation Criteria (My Custom Type)
+
+Review this artifact for:
+1. **Criterion 1** - Description
+2. **Criterion 2** - Description
+...
+
+Focus on <what makes a good artifact of this type>.
+```
+
+Then reference it via frontmatter (`<!-- review-type: my-custom-type -->`) or explicit `--type=my-custom-type`.
+
 ### TODO
 * Fix not auto-running again
 * Improve session auto-detection for artifact path (avoid latest-transcript heuristic)
@@ -249,10 +289,11 @@ The review gate system uses these scripts in `~/.local/bin/`:
 
 | Command | Description |
 |---------|-------------|
+| `architecture-review` | Architecture-focused review for high-leverage design improvements |
 | `bd-breakdown` | Convert a review or feature plan into small, parallelizable Beads issues |
 | `bd-implement` | Implement a beads issue end-to-end with quality checks |
 | `bd-parallel` | Continuously process beads issues with parallel subagents |
-| `architecture-review` | Architecture-focused review for high-leverage design improvements |
+| `code-review` | Multi-model code review for git changes (`--uncommitted`, `--base`, `--commit`, ranges) |
 | `diary` | Create a structured diary entry from the current session |
 | `healthcheck` | Code health review optimized for AI-generated codebases |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |

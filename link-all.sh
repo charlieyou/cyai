@@ -181,6 +181,19 @@ for config_file in "$SCRIPT_DIR"/.claude/*; do
     claude_files+=("$config_name")
 done
 
+# Review prompt templates directory
+review_prompts_source="$SCRIPT_DIR/.claude/review-prompts"
+review_prompts_target="$HOME/.claude/review-prompts"
+if [[ -d "$review_prompts_source" ]]; then
+    if [[ -L "$review_prompts_target" ]]; then
+        rm "$review_prompts_target"
+    elif [[ -d "$review_prompts_target" ]]; then
+        rm -rf "$review_prompts_target"
+    fi
+    ln -s "$review_prompts_source" "$review_prompts_target"
+    echo "Linked review-prompts directory"
+fi
+
 echo "Linked ${#skills[@]} skills: ${skills[*]}"
 echo "Linked ${#commands[@]} commands: ${commands[*]}"
 echo "Linked ${#agents[@]} agents: ${agents[*]}"

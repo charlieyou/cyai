@@ -69,7 +69,7 @@ When in doubt, prioritize:
 
 1. **Map boundaries** (quick pass): entry points, public APIs, services, and core domains
 2. **Trace dependency flow**: identify layers and check for dependency inversions
-3. **Run hotspot tools** (if available): use metrics to rank candidates before deep-diving. If `lizard` is installed, run it first and pick your first 3–5 deep dives from its output.
+3. **Run hotspot tools** (if available): use metrics to rank candidates before deep-diving. Run `lizard` first via `uvx` (or directly if already installed) and pick your first 3–5 deep dives from its output.
 3b. **Run dependency exploration** (if available): in Python repos, use `arch-grimp-*` helpers (or raw `grimp`) to map the import graph (fan-in/out, boundary leaks, cycles). Only enforce layer rules if the repo already defines them or you can state a tentative layering in the review.
 4. **Validate reachability**: ensure hotspots are on real execution paths; skip dead code
 
@@ -82,7 +82,7 @@ Stop traversal once you have enough evidence to populate the top 6–12 issues.
 Use tools to **rank** hotspots before deeper analysis.
 
 ### Complexity & Size
-- Prefer **lizard** as the first-pass complexity/size tool when available. If it’s not installed, explicitly note that in the Method block and fall back to file-size ranking.
+- Prefer **lizard** as the first-pass complexity/size tool when available. If it isn’t installed, run it via `uvx` and note that in the Method block; only fall back to file-size ranking if `uvx` is unavailable.
 - Suggested thresholds (tune to language):
   - Cyclomatic complexity >= **15**
   - Function length >= **80** lines
@@ -90,6 +90,7 @@ Use tools to **rank** hotspots before deeper analysis.
 
 Example commands (adjust extensions/paths):
 ```bash
+uvx lizard -C 15 -L 80 -w src
 lizard -C 15 -L 80 -w src
 rg --files -g '*.{ts,js,py,go,java,kt,rb,cs}' | xargs wc -l | sort -nr | head -n 20
 ```
@@ -97,6 +98,7 @@ rg --files -g '*.{ts,js,py,go,java,kt,rb,cs}' | xargs wc -l | sort -nr | head -n
 Optional (keep output manageable; adjust path/filters):
 ```bash
 # Limit to top 15 functions
+uvx lizard -C 15 -L 80 -w src | head -n 20
 lizard -C 15 -L 80 -w src | head -n 20
 ```
 
@@ -191,7 +193,12 @@ Before marking an issue as High or above:
 
 ## Output Format
 
-Start with a short **Method** block (3–6 bullets) listing: tools run, entry points reviewed, key files scanned, and assumptions/unknowns. If hotspot or dependency tools were attempted (e.g., lizard, grimp), note whether they ran and what they surfaced.
+Start the artifact with the review-type marker (required for review gate):
+```
+<!-- review-type: architecture-review -->
+```
+
+Then include a short **Method** block (3–6 bullets) listing: tools run, entry points reviewed, key files scanned, and assumptions/unknowns. If hotspot or dependency tools were attempted (e.g., lizard, grimp), note whether they ran and what they surfaced.
 Recommended bullet labels:
 - Tools run:
 - Entry points:
