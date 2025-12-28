@@ -648,6 +648,7 @@ review_gate_check() {
     }
 
     # --- Helper: Spawn reviewers for current artifact ---
+    # Returns 0 on success (caller should proceed to polling), exits on error/resolved
     spawn_reviewers() {
         local detected_type
         detected_type=$(detect_review_type)
@@ -662,10 +663,12 @@ review_gate_check() {
                 local status
                 status=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
                 if [[ "$status" == "resolved" ]]; then
+                    # No reviewers available - spawn auto-resolved
                     output_allow
                 fi
             fi
-            output_block "Review gate spawned. Reviewers analyzing..."
+            # Success: return to caller so it can proceed to polling loop
+            return 0
         fi
 
         if ! command -v codex >/dev/null 2>&1 && ! command -v gemini >/dev/null 2>&1; then
