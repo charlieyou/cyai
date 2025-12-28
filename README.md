@@ -185,7 +185,7 @@ The check script polls for reviewer completion with configurable behavior:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `REVIEW_GATE_MAX_WAIT_SECONDS` | 90 | Max time to wait for reviewers before returning |
+| `REVIEW_GATE_MAX_WAIT_SECONDS` | 600 | Max time to wait for reviewers before returning |
 | `REVIEW_GATE_POLL_INTERVAL_SECONDS` | 3 | Polling interval |
 
 The 60-second hook timeout is sufficient for most cases. If reviewers haven't completed, the hook blocks and re-fires on the next stop attempt.
@@ -266,13 +266,6 @@ Focus on <what makes a good artifact of this type>.
 ```
 
 Then reference it via frontmatter (`<!-- review-type: my-custom-type -->`) or explicit `--type=my-custom-type`.
-
-### TODO
-* Fix not auto-running again
-* Improve session auto-detection for artifact path (avoid latest-transcript heuristic)
-* Claude also should launch a subagent for a review
-* Package into plugin
-
 
 ## Skills
 
