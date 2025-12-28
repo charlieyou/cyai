@@ -63,40 +63,49 @@ Architecture exploration and layer checks for Python projects:
 
 ## Review Gate
 
-Multi-model consensus review system that gates Claude Code session termination until artifacts are reviewed and approved.
+Multi-model consensus review system that gates Claude Code session termination until artifacts are reviewed and approved. Operates in **autonomous mode** with automatic revision loops.
 
 ### Purpose
 
 When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), the review gate:
 1. Spawns two AI reviewers (Codex, Gemini) to analyze the artifact in parallel
 2. Blocks session termination until all reviewers complete
-3. Presents a consensus table with verdicts (PASS/FAIL/NEEDS_WORK)
-4. Requires you to decide: PROCEED, REVISE, or ABORT
+3. **Automatically loops** until all reviewers agree (PASS)
+4. Falls back to manual decision after 5 iterations
 
-This ensures AI-generated artifacts get multi-perspective review before you act on them.
+This ensures AI-generated artifacts get multi-perspective review with automatic revision cycles.
 
 ### How It Works
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │ Artifact saved  │────▶│ Stop hook fires  │────▶│ Spawn reviewers │
-│ .review/latest  │     │ review-gate-check│     │ claude/codex/gem│
+│ .review/latest  │     │ review-gate-check│     │ codex / gemini  │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
                                                           │
-┌─────────────────┐     ┌──────────────────┐              ▼
-│ Session allowed │◀────│ User resolves    │◀────────────────────────
-│ to terminate    │     │ proceed/revise   │     Reviews complete,
-└─────────────────┘     └──────────────────┘     results presented
+                                                          ▼
+                               ┌──────────────────────────────────────┐
+                               │         All reviewers PASS?          │
+                               └──────────────────────────────────────┘
+                                        │                    │
+                                       YES                   NO
+                                        │                    │
+                                        ▼                    ▼
+                        ┌───────────────────┐    ┌────────────────────┐
+                        │   Auto-approve    │    │ Request revision   │
+                        │   Session stops   │    │ (loop up to 5x)    │
+                        └───────────────────┘    └────────────────────┘
 ```
 
-**Automatic flow:**
+**Autonomous flow:**
 1. Commands like `/healthcheck` save artifacts to `.review/latest.md`
 2. When Claude tries to stop, the Stop hook detects the artifact
-3. Reviewers spawn in background, hook blocks with "Reviewers analyzing..."
-4. Once complete, hook presents results table and prompts for decision
-5. You run `review-gate-resolve proceed` (or revise/abort) to unblock
-
-**Auto-approval:** If all reviewers return PASS, the gate auto-approves.
+3. Reviewers (Codex, Gemini) spawn in background
+4. Hook polls until all reviewers complete (configurable timeout)
+5. **All PASS** → auto-approve, session allowed to stop
+6. **Not all PASS** → presents issues and blocks for revision
+7. After you revise the artifact, the review automatically re-runs
+8. After 5 iterations without consensus, falls back to manual decision
 
 ### Usage
 
@@ -108,10 +117,9 @@ This ensures AI-generated artifacts get multi-perspective review before you act 
 **Via Stop hook (automatic):**
 Any command that writes to `.review/latest.md` triggers the gate when Claude stops.
 
-**Resolving the gate:**
+**Manual override (only needed after max iterations):**
 ```bash
-review-gate-resolve proceed   # Accept and continue
-review-gate-resolve revise    # Make changes, re-review later
+review-gate-resolve proceed   # Accept anyway
 review-gate-resolve abort     # Discard the artifact
 ```
 
@@ -119,7 +127,7 @@ review-gate-resolve abort     # Discard the artifact
 
 1. Run `./link-all.sh` to install the review-gate scripts to `~/.local/bin/`
 2. Ensure `~/.local/bin` is in your PATH
-3. Have `claude`, `codex`, and/or `gemini` CLIs installed (missing ones are skipped with warning)
+3. Have `codex` and/or `gemini` CLIs installed (missing ones are skipped with warning)
 
 ### Hook Configuration
 
@@ -169,17 +177,18 @@ After adding the configuration:
 1. Start a new Claude Code session
 2. Run `/healthcheck` to generate a review artifact
 3. Verify the review gate triggers when Claude stops
-4. Confirm the PROCEED/REVISE/ABORT flow works correctly
+4. Confirm the autonomous revision loop works (blocks if not all PASS, auto-approves if all PASS)
 
-### Timeout
+### Timeout and Polling
 
-The 60-second timeout is sufficient for the check script to:
-- Detect review artifacts
-- Spawn reviewer processes (if needed)
-- Check reviewer progress
-- Present results
+The check script polls for reviewer completion with configurable behavior:
 
-If you experience timeouts with slow network connections, you can increase this value.
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `REVIEW_GATE_MAX_WAIT_SECONDS` | 90 | Max time to wait for reviewers before returning |
+| `REVIEW_GATE_POLL_INTERVAL_SECONDS` | 3 | Polling interval |
+
+The 60-second hook timeout is sufficient for most cases. If reviewers haven't completed, the hook blocks and re-fires on the next stop attempt.
 
 ### Adding Review Gate to a Command
 
@@ -201,8 +210,8 @@ This enables automatic review gate validation if configured.
 
 When Claude finishes executing the command and tries to stop, the Stop hook will:
 1. Detect the artifact at `.review/latest.md`
-2. Spawn reviewers automatically
-3. Block until you resolve with `review-gate-resolve`
+2. Spawn reviewers (Codex, Gemini) automatically
+3. Auto-approve if all reviewers PASS, or request revisions until they do
 
 ### Scripts
 
