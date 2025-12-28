@@ -15,14 +15,13 @@ CLAUDE_AGENTS="$HOME/.claude/agents"
 
 mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS"
 
-# Clean up stale symlinks (pointing to this repo but target no longer exists)
+# Clean up stale symlinks (broken symlinks in managed directories)
 cleaned=()
-for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$HOME/.claude"; do
+for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$HOME/.claude" "$HOME/.local/bin"; do
     for link in "$dir"/*; do
         [[ ! -L "$link" ]] && continue
-        target="$(readlink "$link")"
-        # Only clean symlinks pointing to this repo
-        if [[ "$target" == "$SCRIPT_DIR"/* ]] && [[ ! -e "$link" ]]; then
+        # Clean any broken symlink in managed directories
+        if [[ ! -e "$link" ]]; then
             rm "$link"
             cleaned+=("$(basename "$link")")
         fi
