@@ -12,7 +12,7 @@
 #
 # Acceptance Criteria Implementation:
 # - [AC1] Exits 0 immediately if resolve command detected
-# - [AC2] Exits 0 if no .review/latest.md exists and no active state
+# - [AC2] Exits 0 if no session-scoped artifact exists and no active state
 # - [AC3] Spawns reviewers if artifact exists but no state file
 # - [AC4] Reports progress if reviewers still running
 # - [AC5] Presents formatted results table when all complete
@@ -47,13 +47,9 @@ resolve_helper() {
 REVIEW_GATE_SPAWN="$(resolve_helper review-gate-spawn || true)"
 REVIEW_GATE_RESOLVE="$(resolve_helper review-gate-resolve || true)"
 
-# [AC9] Resolve project root via $CLAUDE_PROJECT_DIR or git root
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-REVIEW_DIR="$PROJECT_ROOT/.review"
-STATE_FILE="$REVIEW_DIR/gate-state.json"
-REVIEWS_DIR="$REVIEW_DIR/reviews"
-ARTIFACT_FILE="$REVIEW_DIR/latest.md"
-ITERATION_FILE="$REVIEW_DIR/iteration.txt"
+# Source shared library
+source "$SCRIPT_DIR/review-gate-lib.sh"
+
 MAX_ITERATIONS=5
 MAX_WAIT_SECONDS="${REVIEW_GATE_MAX_WAIT_SECONDS:-90}"
 POLL_INTERVAL_SECONDS="${REVIEW_GATE_POLL_INTERVAL_SECONDS:-3}"
@@ -61,7 +57,7 @@ POLL_INTERVAL_SECONDS="${REVIEW_GATE_POLL_INTERVAL_SECONDS:-3}"
 # Read stop hook input from stdin
 INPUT=$(cat)
 
-# --- Session identification (to avoid cross-session blocking) ---
+# --- Session identification ---
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null || echo "")
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // .transcriptPath // empty' 2>/dev/null || echo "")
 
@@ -90,6 +86,18 @@ output_block() {
 output_allow() {
     exit 0
 }
+
+# --- Session-scoped path resolution ---
+# Exit early if no session_id - cannot enforce gate without session context
+if [[ -z "$SESSION_ID" ]]; then
+    output_allow
+fi
+
+REVIEW_DIR=$(resolve_review_dir "$SESSION_ID" "$TRANSCRIPT_PATH")
+STATE_FILE="$REVIEW_DIR/gate-state.json"
+REVIEWS_DIR="$REVIEW_DIR/reviews"
+ARTIFACT_FILE="$REVIEW_DIR/latest.md"
+ITERATION_FILE="$REVIEW_DIR/iteration.txt"
 
 # --- Helper: Compute sha256 (portable-ish) ---
 compute_sha256() {
@@ -197,58 +205,53 @@ if [[ -f "$STATE_FILE" ]]; then
     ensure_state_owner
 fi
 
-# --- [AC8] Extract JSON from potential markdown code fences ---
+# --- [AC8] Extract JSON from reviewer output ---
 extract_json() {
     local file="$1"
-    local json=""
+    local basename
+    basename=$(basename "$file" .json)
 
-    # 1) Raw JSON file
-    if jq -e . "$file" >/dev/null 2>&1; then
-        json=$(cat "$file")
-    else
-        # 2) JSON inside markdown code fences
-        local fenced
-        fenced=$(sed -n '/^```/,/^```/p' "$file" | sed '1d;$d')
-        if [[ -n "$fenced" ]] && echo "$fenced" | jq -e . >/dev/null 2>&1; then
-            json="$fenced"
-        else
-            # 3) Mixed output: extract first JSON object with Python
-            json=$(python - <<'PY' "$file"
-import json, sys
-path = sys.argv[1]
-text = open(path, "r", errors="ignore").read()
-decoder = json.JSONDecoder()
-for i, ch in enumerate(text):
-    if ch != "{":
-        continue
-    try:
-        obj, _ = decoder.raw_decode(text[i:])
-        print(json.dumps(obj))
-        sys.exit(0)
-    except Exception:
-        pass
-sys.exit(1)
-PY
-            ) || return 1
-        fi
-    fi
-
-    # Unwrap known wrapper formats to get the actual review JSON
-    # Priority: structured_output > response (as string) > raw
-    if echo "$json" | jq -e '.structured_output' >/dev/null 2>&1; then
-        echo "$json" | jq -c '.structured_output'
-    elif echo "$json" | jq -e '.response' >/dev/null 2>&1; then
-        # gemini wrapper: .response contains JSON as a string
-        local response_str
-        response_str=$(echo "$json" | jq -r '.response')
-        if echo "$response_str" | jq -e . >/dev/null 2>&1; then
-            echo "$response_str" | jq -c .
-        else
-            echo "$json"
-        fi
-    else
-        echo "$json"
-    fi
+    case "$basename" in
+        codex)
+            # Codex: extract JSON between "codex" and "tokens used" markers (may be multi-line)
+            # Format: ...logs... then "codex" then JSON then "tokens used" then count then JSON again
+            local json
+            json=$(sed -n '/^codex$/,/^tokens used$/{ /^codex$/d; /^tokens used$/d; p; }' "$file")
+            if [[ -z "$json" ]] || ! echo "$json" | jq -e . >/dev/null 2>&1; then
+                # Fallback: capture JSON after "tokens used" (skipping the count line)
+                json=$(awk '
+                    $0 == "tokens used" { in=1; next }
+                    in && !started {
+                        if ($0 ~ /^[0-9,]+$/) { next }
+                        if ($0 ~ /^[[:space:]]*[{[]/) { started=1; print; next }
+                        next
+                    }
+                    started { print }
+                ' "$file")
+            fi
+            if [[ -z "$json" ]] || ! echo "$json" | jq -e . >/dev/null 2>&1; then
+                # Fallback: find last valid single-line JSON
+                json=$(tac "$file" | while IFS= read -r line; do
+                    if echo "$line" | jq -e . >/dev/null 2>&1; then
+                        echo "$line"
+                        break
+                    fi
+                done)
+            fi
+            echo "$json" | jq -c '.'
+            ;;
+        gemini)
+            # Gemini: skip first line, parse JSON, extract .response key
+            local json
+            json=$(tail -n +2 "$file" | jq -c '.' 2>/dev/null) || return 1
+            # Extract .response (contains review JSON as string) and parse
+            echo "$json" | jq -r '.response' | jq -c '.'
+            ;;
+        *)
+            # Fallback: try raw JSON
+            jq -c '.' "$file" 2>/dev/null || return 1
+            ;;
+    esac
 }
 
 # --- Get/increment iteration count ---
@@ -280,16 +283,6 @@ clean_for_rerun() {
 STATUS="unknown"
 if [[ -f "$STATE_FILE" ]]; then
     STATUS=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
-fi
-
-# --- Skip gate for other sessions when state has an owner (pending/awaiting only) ---
-if [[ -f "$STATE_FILE" && "$STATUS" != "resolved" ]]; then
-    OWNER_KEY=$(jq -r '.owner.session_key // ""' "$STATE_FILE" 2>/dev/null || echo "")
-    if [[ -n "$OWNER_KEY" ]]; then
-        if [[ -z "$SESSION_KEY" || "$OWNER_KEY" != "$SESSION_KEY" ]]; then
-            output_allow
-        fi
-    fi
 fi
 
 # If resolved, allow stop unless a new artifact is present
@@ -594,7 +587,7 @@ Please manually review and decide:
 
 **All reviewers must agree (PASS) before proceeding.**
 
-Please revise \`.review/latest.md\` to address the following issues:
+Please revise the artifact to address the following issues:
 
 $ISSUES
 
