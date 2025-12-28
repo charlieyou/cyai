@@ -167,6 +167,7 @@ spawn_reviewer() {
     local name="$1"
     local cmd="$2"
     local prompt_file="$3"
+    local schema_file="$4"
 
     # Ensure reviews directory exists
     mkdir -p "$REVIEWS_DIR"
@@ -188,7 +189,7 @@ spawn_reviewer() {
             REVIEW_FAIL="$failed_file" \
             REVIEW_PROMPT="$prompt_file" \
             nohup setsid bash -c '
-                if gemini --model gemini-2.5-flash < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                if gemini -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                     touch "$REVIEW_DONE"
                 else
                     touch "$REVIEW_FAIL"
@@ -200,8 +201,9 @@ spawn_reviewer() {
             REVIEW_DONE="$sentinel_file" \
             REVIEW_FAIL="$failed_file" \
             REVIEW_PROMPT="$prompt_file" \
+            REVIEW_SCHEMA="$schema_file" \
             nohup setsid bash -c '
-                if codex exec -m gpt-5.1-codex-mini -c reasoning.effort=high -s read-only - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                if codex exec -m gpt-5.2-codex -s read-only --output-schema "$REVIEW_SCHEMA" - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                     touch "$REVIEW_DONE"
                 else
                     touch "$REVIEW_FAIL"
@@ -252,6 +254,34 @@ main() {
     local prompt_file="$REVIEWS_DIR/review.prompt"
     build_prompt "$artifact_path" > "$prompt_file"
 
+    # Create JSON schema for structured output
+    local schema_file="$REVIEWS_DIR/review-schema.json"
+    cat > "$schema_file" <<'SCHEMA'
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "NEEDS_WORK"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "issues": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": ["verdict", "confidence", "issues", "summary"],
+  "additionalProperties": false
+}
+SCHEMA
+
     # Initialize state
     local now
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -295,7 +325,7 @@ main() {
     local spawned=0
 
     for reviewer in gemini codex; do
-        if spawn_reviewer "$reviewer" "$reviewer" "$prompt_file"; then
+        if spawn_reviewer "$reviewer" "$reviewer" "$prompt_file" "$schema_file"; then
             reviewers_json=$(echo "$reviewers_json" | jq \
                 --arg name "$reviewer" \
                 --arg output "$REVIEWS_DIR/${reviewer}.json" \
