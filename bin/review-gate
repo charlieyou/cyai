@@ -340,7 +340,7 @@ PROMPT
                 REVIEW_FAIL="$failed_file" \
                 REVIEW_PROMPT="$prompt_file" \
                 nohup setsid bash -c '
-                    if gemini -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                    if gemini -m gemini-3-flash-preview -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                         touch "$REVIEW_DONE"
                     else
                         touch "$REVIEW_FAIL"
@@ -354,7 +354,7 @@ PROMPT
                 REVIEW_PROMPT="$prompt_file" \
                 REVIEW_SCHEMA="$schema_file" \
                 nohup setsid bash -c '
-                    if codex exec -m gpt-5.2-codex -s read-only --output-schema "$REVIEW_SCHEMA" - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                    if codex exec -m gpt-5.2-codex -c model_reasoning_effort=\"high\" -s read-only --output-schema "$REVIEW_SCHEMA" - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                         touch "$REVIEW_DONE"
                     else
                         touch "$REVIEW_FAIL"
