@@ -54,4 +54,4 @@ then
     "$PYTHON" -m pip install -q grimp
 fi
 
-exec "$PYTHON" "$SCRIPT" "$@"
+PYTHONPATH=. exec "$PYTHON" "$SCRIPT" "$@"
