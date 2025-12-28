@@ -9,8 +9,14 @@
 
 set -euo pipefail
 
-# Resolve helper scripts relative to this file (works when symlinked)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve helper scripts relative to this file (follows symlinks)
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
 # Source shared library
 source "$SCRIPT_DIR/review-gate-lib.sh"
@@ -171,21 +177,13 @@ USAGE
         fi
         prompt_content=$(cat "$prompt_file")
     else
-        # Look for named preset
-        local preset_paths=(
-            "$HOME/.claude/review-generators/${review_type}.md"
-            "$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.claude/review-generators/${review_type}.md"
-        )
+        # Look for named preset (relative to this script's repo)
+        local prompt_path="$SCRIPT_DIR/../prompts/generators/${review_type}.md"
 
-        for path in "${preset_paths[@]}"; do
-            if [[ -f "$path" ]]; then
-                prompt_content=$(cat "$path")
-                break
-            fi
-        done
-
-        if [[ -z "$prompt_content" ]]; then
-            die "No prompt found for type '$review_type'. Create ~/.claude/review-generators/${review_type}.md"
+        if [[ -f "$prompt_path" ]]; then
+            prompt_content=$(cat "$prompt_path")
+        else
+            die "No prompt found for type '$review_type' at $prompt_path"
         fi
     fi
 
