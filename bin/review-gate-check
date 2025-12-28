@@ -233,9 +233,19 @@ PY
         fi
     fi
 
-    # If wrapped in structured_output, unwrap it
+    # Unwrap known wrapper formats to get the actual review JSON
+    # Priority: structured_output > response (as string) > raw
     if echo "$json" | jq -e '.structured_output' >/dev/null 2>&1; then
         echo "$json" | jq -c '.structured_output'
+    elif echo "$json" | jq -e '.response' >/dev/null 2>&1; then
+        # gemini wrapper: .response contains JSON as a string
+        local response_str
+        response_str=$(echo "$json" | jq -r '.response')
+        if echo "$response_str" | jq -e . >/dev/null 2>&1; then
+            echo "$response_str" | jq -c .
+        else
+            echo "$json"
+        fi
     else
         echo "$json"
     fi
