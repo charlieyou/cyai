@@ -241,13 +241,13 @@ The architecture review found no issues meeting the severity threshold. [Brief n
 After completing the review, use the Bash tool to get the session-scoped artifact path:
 
 ```
-~/.local/bin/review-gate-artifact-path
+~/.local/bin/review-gate artifact-path
 ```
 
 Then use the Write tool to save this entire review output to that path (use the exact path returned):
 
 ```
-Write the complete review above to /absolute/path/from/review-gate-artifact-path
+Write the complete review above to <paste the path printed above>
 ```
 
 This enables automatic review gate validation if configured.

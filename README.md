@@ -80,7 +80,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │ Artifact saved  │────▶│ Stop hook fires  │────▶│ Spawn reviewers │
-│ session latest  │     │ review-gate-check│     │ codex / gemini  │
+│ session latest  │     │ review-gate check│     │ codex / gemini  │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
                                                           │
                                                           ▼
@@ -98,7 +98,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ```
 
 **Autonomous flow:**
-1. Commands like `/healthcheck` save artifacts to the session-scoped `latest.md` (use `review-gate-artifact-path`)
+1. Commands like `/healthcheck` save artifacts to the session-scoped `latest.md` (use `review-gate artifact-path`)
 2. When Claude tries to stop, the Stop hook detects the artifact
 3. Reviewers (Codex, Gemini) spawn in background
 4. Hook polls until all reviewers complete (configurable timeout)
@@ -119,8 +119,8 @@ Any command that writes to the session-scoped `latest.md` triggers the gate when
 
 **Manual override (only needed after max iterations):**
 ```bash
-review-gate-resolve proceed   # Accept anyway
-review-gate-resolve abort     # Discard the artifact
+review-gate resolve proceed   # Accept anyway
+review-gate resolve abort     # Discard the artifact
 ```
 
 ### Prerequisites
@@ -140,7 +140,7 @@ Add the following Stop hook to your `~/.claude/settings.json`:
       {
         "hooks": [{
           "type": "command",
-          "command": "~/.local/bin/review-gate-check",
+          "command": "~/.local/bin/review-gate check",
           "timeout": 60
         }]
       }
@@ -161,7 +161,7 @@ If you already have a `hooks` key in your settings.json, add the Stop array to i
       {
         "hooks": [{
           "type": "command",
-          "command": "~/.local/bin/review-gate-check",
+          "command": "~/.local/bin/review-gate check",
           "timeout": 60
         }]
       }
@@ -202,13 +202,13 @@ To make a command automatically trigger the review gate, add this section at the
 After completing the review, use the Bash tool to get the session-scoped artifact path:
 
 \`\`\`
-~/.local/bin/review-gate-artifact-path
+~/.local/bin/review-gate artifact-path
 \`\`\`
 
 Then use the Write tool to save this entire review output to that path (use the exact path returned):
 
 \`\`\`
-Write the complete review above to /absolute/path/from/review-gate-artifact-path
+Write the complete review above to <paste the path printed above>
 \`\`\`
 
 This enables automatic review gate validation if configured.
@@ -225,10 +225,7 @@ The review gate system uses these scripts in `~/.local/bin/`:
 
 | Script | Purpose |
 |--------|---------|
-| `review-gate-check` | Stop hook that manages the review gate lifecycle |
-| `review-gate-spawn` | Spawns reviewer processes for each model |
-| `review-gate-resolve` | Resolves the gate with proceed/revise/abort |
-| `review-gate-artifact-path` | Prints the session-scoped review artifact path |
+| `review-gate` | Multi-model review gate entrypoint (check/spawn/resolve/artifact-path) |
 
 ### TODO
 * Fix not auto-running again

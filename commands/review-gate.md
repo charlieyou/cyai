@@ -15,10 +15,10 @@ Run multi-model consensus review on an artifact. Two reviewers (Codex, Gemini) a
 
 ### 1. Trigger Review
 
-Use the Bash tool to run the spawn script:
+Use the Bash tool to run the spawn command:
 
 ```bash
-~/.local/bin/review-gate-spawn "$ARGUMENTS"
+~/.local/bin/review-gate spawn "$ARGUMENTS"
 ```
 
 ### 2. Automatic Review Loop
@@ -33,7 +33,7 @@ The Stop hook will automatically:
 
 When reviewers don't all agree:
 1. Review the issues presented from each reviewer
-2. Update the session-scoped artifact (path from `review-gate-artifact-path`) to address the feedback
+2. Update the session-scoped artifact (path from `review-gate artifact-path`) to address the feedback
 3. The review automatically re-runs (up to 5 iterations)
 
 ### 4. Completion
@@ -46,6 +46,6 @@ When reviewers don't all agree:
 If you need to force a decision after max iterations:
 
 ```bash
-~/.local/bin/review-gate-resolve proceed  # Accept anyway
-~/.local/bin/review-gate-resolve abort    # Discard
+~/.local/bin/review-gate resolve proceed  # Accept anyway
+~/.local/bin/review-gate resolve abort    # Discard
 ```
