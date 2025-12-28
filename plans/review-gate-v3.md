@@ -7,8 +7,8 @@ Three review capabilities sharing common infrastructure:
 | Capability | Status | Flow | What Claude Iterates On |
 |------------|--------|------|-------------------------|
 | **Generator Pipeline** | ✅ DONE | Generators → Synthesis → Review | Artifact |
-| **Code Review Iterative** | MVP | Reviewers → Feedback → Fix | Code files |
-| **Plan Review Iterative** | MVP | Reviewers → Feedback → Fix | Plan file |
+| **Code Review Iterative** | ✅ DONE | Reviewers → Feedback → Fix | Code files |
+| **Plan Review Iterative** | ✅ DONE | Reviewers → Feedback → Fix | Plan file |
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -19,8 +19,8 @@ Three review capabilities sharing common infrastructure:
          ▼                           ▼                           ▼
 ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
 │ GENERATOR PIPELINE│   │ CODE REVIEW       │   │ PLAN REVIEW       │
-│ ✅ DONE           │   │ ITERATIVE         │   │ ITERATIVE         │
-│ /healthcheck      │   │ /code-review      │   │ /review-plan      │
+│ ✅ DONE           │   │ ✅ DONE           │   │ ✅ DONE           │
+│ /healthcheck      │   │ /code-review      │   │ /plan-review      │
 ├───────────────────┤   ├───────────────────┤   ├───────────────────┤
 │ Generators create │   │ Reviewers see     │   │ Reviewers see     │
 │ drafts, Claude    │   │ git diff, Claude  │   │ plan file, Claude │
@@ -64,7 +64,7 @@ Three review capabilities sharing common infrastructure:
 
 ---
 
-## Part 2: Code Review Iterative (MVP)
+## Part 2: Code Review Iterative (✅ DONE)
 
 ### Goal
 External reviewers evaluate code diff directly. Claude fixes code until unanimous pass.
@@ -133,7 +133,7 @@ if [[ "$TRIGGER_SOURCE" == "code-review-iterative" ]]; then
 fi
 ```
 
-#### 3. New command: `commands/code-review-iterative.md`
+#### 3. Updated command: `commands/code-review.md`
 
 ```markdown
 ---
@@ -147,7 +147,7 @@ Fix issues in code until all reviewers pass.
 
 ---
 
-## Part 3: Plan Review Iterative (MVP)
+## Part 3: Plan Review Iterative (✅ DONE)
 
 ### Goal
 External reviewers evaluate plan file directly. Claude fixes plan until unanimous pass.
@@ -196,7 +196,7 @@ if [[ "$TRIGGER_SOURCE" == "plan-review-iterative" ]]; then
 fi
 ```
 
-#### 3. New command: `commands/review-plan-iterative.md`
+#### 3. New command: `commands/plan-review.md`
 
 ```markdown
 ---
@@ -217,8 +217,8 @@ Fix issues in plan until all reviewers pass.
 | `bin/review-gate` | Add `spawn-code-review` subcommand (~80 lines) |
 | `bin/review-gate` | Add `spawn-plan-review` subcommand (~60 lines) |
 | `bin/review-gate` | Modify `check` for iterative triggers (~30 lines) |
-| `commands/code-review-iterative.md` | New command |
-| `commands/review-plan-iterative.md` | New command |
+| `commands/code-review.md` | Updated for iterative flow |
+| `commands/plan-review.md` | New command |
 
 ---
 
@@ -251,10 +251,10 @@ Fix issues in plan until all reviewers pass.
 
 ### Phase 2: Code Review Iterative
 1. Add `spawn-code-review` subcommand
-2. Create `code-review-iterative.md` command
+2. Update `code-review.md` command
 3. Test end-to-end
 
 ### Phase 3: Plan Review Iterative
 1. Add `spawn-plan-review` subcommand
-2. Create `review-plan-iterative.md` command
+2. Create `plan-review.md` command
 3. Test end-to-end

@@ -1,87 +1,66 @@
 ---
-description: Multi-model code review
+description: Iterative code review with external reviewers
 argument-hint: [--uncommitted | --base <branch> | --commit <sha> | <range>]
 ---
 
-# Code Review
+# Code Review (Iterative)
 
-Review code changes with multi-model consensus.
+Multi-model code review that automatically iterates until all reviewers pass. External reviewers (Codex, Gemini) evaluate the code diff directly, and you fix the code until unanimous pass.
 
-## Gather Changes
+## Usage
 
-Based on $ARGUMENTS, run the appropriate git command:
+```
+/code-review                    # Review uncommitted changes (default)
+/code-review --uncommitted      # Review uncommitted changes
+/code-review --base main        # Review changes from main to HEAD
+/code-review --commit abc123    # Review a specific commit
+/code-review main..feature      # Review a commit range
+```
 
-| Argument | Command |
-|----------|---------|
-| `--uncommitted` | `git diff` (unstaged) + `git diff --cached` (staged) + `git ls-files --others --exclude-standard` (untracked) |
-| `--base <branch>` | `git diff <branch>...HEAD` |
-| `--commit <sha>` | `git show <sha>` |
-| `<sha1>..<sha2>` | `git log --oneline <range>` + `git diff <range>` |
-| (none) | Default to `--uncommitted` |
+## How It Works
 
-For `--uncommitted`, also show contents of untracked files if they exist.
+1. **Spawn Review**: Run the spawn command to start the review
+2. **Reviewers Evaluate**: Codex and Gemini analyze the diff in parallel
+3. **Fix Issues**: If reviewers find issues, fix the code
+4. **Re-review**: Reviews automatically re-run after you make changes
+5. **Pass**: When all reviewers agree (PASS), the gate resolves
+
+## Run the Review
+
+Use the Bash tool to spawn the code review:
+
+```bash
+~/.local/bin/review-gate spawn-code-review $ARGUMENTS
+```
 
 ## Review Criteria
 
-Analyze the code changes for:
+Reviewers evaluate for:
 
 1. **Correctness** - Does the code do what it intends? Logic errors?
 2. **Security** - Injection, auth bypass, data exposure, secrets in code?
-3. **Performance** - Obvious inefficiencies, N+1 queries, memory leaks?
-4. **Maintainability** - Readable? Well-structured? Appropriate abstractions?
-5. **Testing** - Edge cases handled? Test coverage adequate?
-6. **Breaking Changes** - API changes that could break consumers?
-7. **Error Handling** - Failures handled gracefully?
+3. **Error Handling** - Failures handled gracefully? Edge cases covered?
+4. **Performance** - Obvious inefficiencies?
+5. **Breaking Changes** - API changes that could break consumers?
 
-Focus on substantive issues. Ignore style nitpicks unless they impact readability.
+## Revision Cycle
 
-## Severity Definitions
+When reviewers don't all agree:
 
-- **Critical**: Would cause data loss, security breach, financial error, or crash in production
-- **High**: Will cause bugs under realistic conditions, or blocks understanding
-- **Medium**: Correct but hard to maintain or extend
-- **Low**: Style, naming, minor inconsistency
+1. The stop hook presents issues from each reviewer
+2. Fix the code to address the feedback
+3. The review automatically re-runs (up to 5 iterations)
 
-## Output Format
+## Completion
 
-After completing the review, use the Bash tool to get the session-scoped artifact path:
+- **All reviewers PASS**: Auto-resolves and allows stop
+- **Max iterations reached**: Falls back to manual decision
 
+## Manual Override
+
+If needed after max iterations:
+
+```bash
+~/.local/bin/review-gate resolve proceed  # Accept anyway
+~/.local/bin/review-gate resolve abort    # Discard
 ```
-~/.local/bin/review-gate artifact-path
-```
-
-Then use the Write tool to save the review to that path with this structure:
-
-```markdown
-<!-- review-type: code-review -->
-
-# Code Review
-
-## Summary
-<1-2 sentence overview of changes>
-
-## Changes Reviewed
-- Mode: <uncommitted/base/commit/range>
-- Files changed: <count>
-
-## Issues
-
-### [Critical] <title>
-**File**: path/to/file.py:123
-**Category**: Security|Correctness|Performance|...
-**Description**: What's wrong
-**Suggested Fix**: How to fix it
-
-### [High] <title>
-...
-
-### [Medium] <title>
-...
-
-## Verdict
-<PASS if no Critical/High issues, otherwise NEEDS_WORK or FAIL>
-```
-
-## Triggers Review Gate
-
-After writing, the Stop hook will spawn Codex/Gemini to validate your review.
