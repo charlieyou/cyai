@@ -80,7 +80,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │ Artifact saved  │────▶│ Stop hook fires  │────▶│ Spawn reviewers │
-│ .review/latest  │     │ review-gate-check│     │ codex / gemini  │
+│ session latest  │     │ review-gate-check│     │ codex / gemini  │
 └─────────────────┘     └──────────────────┘     └─────────────────┘
                                                           │
                                                           ▼
@@ -98,7 +98,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ```
 
 **Autonomous flow:**
-1. Commands like `/healthcheck` save artifacts to `.review/latest.md`
+1. Commands like `/healthcheck` save artifacts to the session-scoped `latest.md` (use `review-gate-artifact-path`)
 2. When Claude tries to stop, the Stop hook detects the artifact
 3. Reviewers (Codex, Gemini) spawn in background
 4. Hook polls until all reviewers complete (configurable timeout)
@@ -115,7 +115,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ```
 
 **Via Stop hook (automatic):**
-Any command that writes to `.review/latest.md` triggers the gate when Claude stops.
+Any command that writes to the session-scoped `latest.md` triggers the gate when Claude stops.
 
 **Manual override (only needed after max iterations):**
 ```bash
@@ -199,17 +199,23 @@ To make a command automatically trigger the review gate, add this section at the
 
 ## Final Step
 
-After completing the review, use the Write tool to save this entire review output to `.review/latest.md`:
+After completing the review, use the Bash tool to get the session-scoped artifact path:
 
 \`\`\`
-Write the complete review above to .review/latest.md
+~/.local/bin/review-gate-artifact-path
+\`\`\`
+
+Then use the Write tool to save this entire review output to that path (use the exact path returned):
+
+\`\`\`
+Write the complete review above to /absolute/path/from/review-gate-artifact-path
 \`\`\`
 
 This enables automatic review gate validation if configured.
 ```
 
 When Claude finishes executing the command and tries to stop, the Stop hook will:
-1. Detect the artifact at `.review/latest.md`
+1. Detect the artifact at the session-scoped `latest.md`
 2. Spawn reviewers (Codex, Gemini) automatically
 3. Auto-approve if all reviewers PASS, or request revisions until they do
 
@@ -222,6 +228,14 @@ The review gate system uses these scripts in `~/.local/bin/`:
 | `review-gate-check` | Stop hook that manages the review gate lifecycle |
 | `review-gate-spawn` | Spawns reviewer processes for each model |
 | `review-gate-resolve` | Resolves the gate with proceed/revise/abort |
+| `review-gate-artifact-path` | Prints the session-scoped review artifact path |
+
+### TODO
+* Fix not auto-running again
+* Improve session auto-detection for artifact path (avoid latest-transcript heuristic)
+* Claude also should launch a subagent for a review
+* Package into plugin
+
 
 ## Skills
 

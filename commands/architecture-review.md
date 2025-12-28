@@ -238,10 +238,16 @@ The architecture review found no issues meeting the severity threshold. [Brief n
 
 ## Final Step
 
-After completing the review, use the Write tool to save this entire review output to `.review/latest.md`:
+After completing the review, use the Bash tool to get the session-scoped artifact path:
 
 ```
-Write the complete review above to .review/latest.md
+~/.local/bin/review-gate-artifact-path
+```
+
+Then use the Write tool to save this entire review output to that path (use the exact path returned):
+
+```
+Write the complete review above to /absolute/path/from/review-gate-artifact-path
 ```
 
 This enables automatic review gate validation if configured.

@@ -33,7 +33,7 @@ The Stop hook will automatically:
 
 When reviewers don't all agree:
 1. Review the issues presented from each reviewer
-2. Update `.review/latest.md` to address the feedback
+2. Update the session-scoped artifact (path from `review-gate-artifact-path`) to address the feedback
 3. The review automatically re-runs (up to 5 iterations)
 
 ### 4. Completion

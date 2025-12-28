@@ -2,15 +2,15 @@
 # review-gate-spawn - Spawn multi-model reviewers for an artifact
 #
 # Usage: review-gate-spawn <artifact-path>
-#        review-gate-spawn  # Uses .review/latest.md if exists
+#        review-gate-spawn  # Uses session-scoped latest.md if exists
 #
-# Creates .review/gate-state.json and spawns Codex, Gemini reviewers
-# in the background. Each writes output to .review/reviews/<model>.json and
-# creates a .review/reviews/<model>.done sentinel on completion.
+# Creates session-scoped gate-state.json and spawns Codex, Gemini reviewers
+# in the background. Each writes output to <session>/reviews/<model>.json and
+# creates a <session>/reviews/<model>.done sentinel on completion.
 #
 # Acceptance Criteria Implementation:
 # - [AC1] Script accepts artifact path as argument: resolve_artifact() L41-54, main() L195
-# - [AC2] Creates .review/reviews/ directory: clean_state() L88
+# - [AC2] Creates session-scoped reviews/ directory: clean_state() L88
 # - [AC3] Spawns available reviewers (skip missing CLIs with warning): preflight_check() L32-37, spawn_reviewer() L139-141
 # - [AC4] Creates gate-state.json with created_at timestamp: main() L211, L220, L229, L258
 # - [AC5] Background processes survive script exit: spawn_reviewer() runs reviewer commands in background subshells
@@ -20,17 +20,28 @@
 
 set -euo pipefail
 
-# [AC8] Resolve project root via $CLAUDE_PROJECT_DIR or git root
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-REVIEW_DIR="$PROJECT_ROOT/.review"
-STATE_FILE="$REVIEW_DIR/gate-state.json"
-REVIEWS_DIR="$REVIEW_DIR/reviews"
+# Resolve helper scripts relative to this file (works when symlinked)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- Owner/session metadata (best-effort) ---
+# Source shared library
+source "$SCRIPT_DIR/review-gate-lib.sh"
+
+# --- Session metadata (required for session-scoped paths) ---
 OWNER_SESSION_KEY="${REVIEW_GATE_SESSION_KEY:-}"
 OWNER_SOURCE="${REVIEW_GATE_SESSION_SOURCE:-}"
 OWNER_SESSION_ID="${REVIEW_GATE_SESSION_ID:-}"
 OWNER_TRANSCRIPT_PATH="${REVIEW_GATE_TRANSCRIPT_PATH:-}"
+
+# [AC8] Session-scoped path resolution
+if [[ -z "$OWNER_SESSION_ID" ]]; then
+    echo "Error: REVIEW_GATE_SESSION_ID is required" >&2
+    echo "This script should be called from review-gate-check context" >&2
+    exit 1
+fi
+
+REVIEW_DIR=$(resolve_review_dir "$OWNER_SESSION_ID" "$OWNER_TRANSCRIPT_PATH")
+STATE_FILE="$REVIEW_DIR/gate-state.json"
+REVIEWS_DIR="$REVIEW_DIR/reviews"
 
 # --- Preflight checks ---
 preflight_check() {
@@ -54,7 +65,7 @@ preflight_check() {
 }
 
 # --- Determine artifact path ---
-# [AC1] Determine artifact path from argument or default to latest.md
+# [AC1] Determine artifact path from argument or session-scoped latest.md
 resolve_artifact() {
     local arg="${1:-}"
 
@@ -62,10 +73,10 @@ resolve_artifact() {
         # [AC1] Explicit path provided as argument
         realpath "$arg"
     elif [[ -f "$REVIEW_DIR/latest.md" ]]; then
-        # Default to latest.md
+        # Session-scoped artifact
         realpath "$REVIEW_DIR/latest.md"
     else
-        echo "No artifact found. Provide path or create .review/latest.md" >&2
+        echo "No artifact found. Provide path as argument." >&2
         exit 1
     fi
 }
@@ -102,7 +113,7 @@ check_existing_gate() {
 clean_state() {
     rm -f "$STATE_FILE"
     rm -rf "$REVIEWS_DIR"
-    # [AC2] Creates .review/reviews/ directory
+    # [AC2] Creates session-scoped reviews/ directory
     mkdir -p "$REVIEWS_DIR"
 }
 
@@ -320,7 +331,7 @@ SCHEMA
         }')
 
     # Spawn reviewers and record in state
-    # Completion tracked via .done sentinels (check for .review/reviews/<name>.done)
+# Completion tracked via .done sentinels (check for <session>/reviews/<name>.done)
     local reviewers_json='{}'
     local spawned=0
 

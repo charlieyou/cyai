@@ -3,17 +3,23 @@
 #
 # Usage: review-gate-resolve <proceed|revise|abort>
 #
-# Updates .review/gate-state.json to mark the gate as resolved,
+# Updates the session-scoped gate-state.json to mark the gate as resolved,
 # allowing the Stop hook to permit session termination.
 #
 # Acceptance criteria:
 # - Accepts decision argument: proceed, revise, or abort
-# - Updates .review/gate-state.json status to "resolved"
+# - Updates session-scoped gate-state.json status to "resolved"
 # - Records decision action and timestamp
 # - Validates decision argument
 # - Handles missing state file gracefully (exits 0)
 
 set -euo pipefail
+
+# Resolve helper scripts relative to this file (works when symlinked)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared library
+source "$SCRIPT_DIR/review-gate-lib.sh"
 
 # Validate argument
 if [[ $# -lt 1 ]]; then
@@ -33,14 +39,25 @@ case "$DECISION" in
         ;;
 esac
 
-# Determine project root (use CLAUDE_PROJECT_DIR if set and valid, otherwise git root)
-# Resolve to absolute path to ensure STATE_FILE uses absolute paths
-if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] && [[ -d "$CLAUDE_PROJECT_DIR" ]]; then
-    PROJECT_ROOT="$(cd "$CLAUDE_PROJECT_DIR" && pwd)"
+# --- Session-scoped path resolution ---
+SESSION_ID="${REVIEW_GATE_SESSION_ID:-}"
+TRANSCRIPT_PATH="${REVIEW_GATE_TRANSCRIPT_PATH:-}"
+
+if [[ -n "$SESSION_ID" ]]; then
+    # Session context available - use session-scoped path
+    REVIEW_DIR=$(resolve_review_dir "$SESSION_ID" "$TRANSCRIPT_PATH")
+    STATE_FILE="$REVIEW_DIR/gate-state.json"
 else
-    PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    # No session context - try to find active gate in project
+    ACTIVE_SESSION=$(find_active_gate "$TRANSCRIPT_PATH" 2>/dev/null || echo "")
+    if [[ -n "$ACTIVE_SESSION" ]]; then
+        BASE_DIR=$(get_review_base_dir "$TRANSCRIPT_PATH")
+        STATE_FILE="$BASE_DIR/$ACTIVE_SESSION/gate-state.json"
+    else
+        echo "No active review gate found" >&2
+        exit 0
+    fi
 fi
-STATE_FILE="$PROJECT_ROOT/.review/gate-state.json"
 
 # Check if state file exists
 if [[ ! -f "$STATE_FILE" ]]; then

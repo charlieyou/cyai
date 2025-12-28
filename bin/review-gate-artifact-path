@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# review-gate-artifact-path - Print session-scoped review artifact path
+
+set -euo pipefail
+
+# Resolve helper scripts relative to this file (works when symlinked)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source shared library
+source "$SCRIPT_DIR/review-gate-lib.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage: review-gate-artifact-path [--session-id <id>] [--transcript-path <path>]
+
+Prints the session-scoped review artifact path (latest.md).
+USAGE
+}
+
+SESSION_ID="${REVIEW_GATE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+TRANSCRIPT_PATH="${REVIEW_GATE_TRANSCRIPT_PATH:-${CLAUDE_TRANSCRIPT_PATH:-}}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --session-id)
+            SESSION_ID="${2:-}"
+            shift 2
+            ;;
+        --transcript-path)
+            TRANSCRIPT_PATH="${2:-}"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown option '$1'" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+find_latest_transcript() {
+    local project_hash base_dir latest
+    project_hash=$(get_project_hash "")
+    base_dir="$HOME/.claude/projects/$project_hash"
+
+    [[ -d "$base_dir" ]] || return 1
+
+    latest=$(ls -t "$base_dir"/*.jsonl 2>/dev/null | grep -v '/agent-' | head -n 1 || true)
+    if [[ -z "$latest" ]]; then
+        latest=$(ls -t "$base_dir"/agent-*.jsonl 2>/dev/null | head -n 1 || true)
+    fi
+
+    [[ -n "$latest" ]] || return 1
+    echo "$latest"
+}
+
+if [[ -z "$TRANSCRIPT_PATH" ]]; then
+    TRANSCRIPT_PATH="$(find_latest_transcript || true)"
+fi
+
+if [[ -z "$SESSION_ID" && -n "$TRANSCRIPT_PATH" ]]; then
+    SESSION_ID="$(basename "$TRANSCRIPT_PATH" .jsonl)"
+fi
+
+if [[ -z "$SESSION_ID" ]]; then
+    echo "Error: Unable to determine session id. Set REVIEW_GATE_SESSION_ID or pass --session-id." >&2
+    exit 1
+fi
+
+REVIEW_DIR=$(resolve_review_dir "$SESSION_ID" "$TRANSCRIPT_PATH")
+echo "$REVIEW_DIR/latest.md"
