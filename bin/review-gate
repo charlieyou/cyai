@@ -180,6 +180,7 @@ USAGE
     REVIEW_DIR=$(resolve_review_dir "$OWNER_SESSION_ID" "$OWNER_TRANSCRIPT_PATH")
     STATE_FILE="$REVIEW_DIR/gate-state.json"
     REVIEWS_DIR="$REVIEW_DIR/reviews"
+    ITERATION_FILE="$REVIEW_DIR/iteration.txt"
 
     # --- Preflight checks ---
     preflight_check() {
@@ -244,8 +245,21 @@ USAGE
         fi
     }
 
+    # --- Archive previous reviews ---
+    archive_previous_reviews() {
+        # Get current iteration (or 0 if not set)
+        local iteration=0
+        if [[ -f "$ITERATION_FILE" ]]; then
+            iteration=$(cat "$ITERATION_FILE" 2>/dev/null || echo "0")
+        fi
+
+        # Use shared archive function
+        archive_reviews "$REVIEW_DIR" "$REVIEWS_DIR" "$iteration"
+    }
+
     # --- Clean previous state ---
     clean_state() {
+        archive_previous_reviews
         rm -f "$STATE_FILE"
         rm -rf "$REVIEWS_DIR"
         mkdir -p "$REVIEWS_DIR"
@@ -280,6 +294,84 @@ USAGE
 DEFAULT
     }
 
+    # --- Get previous reviews if available ---
+    get_previous_reviews() {
+        # Find the most recent archived reviews directory
+        local latest_archive=""
+        local latest_iter=-1
+        local latest_dir_name=""
+
+        for archive_dir in "$REVIEW_DIR"/reviews-iter-*; do
+            if [[ -d "$archive_dir" ]]; then
+                # Extract iteration number from directory name
+                local dir_name
+                dir_name=$(basename "$archive_dir")
+                local iter
+                iter=$(echo "$dir_name" | sed 's/reviews-iter-\([0-9]*\).*/\1/')
+                if [[ "$iter" =~ ^[0-9]+$ ]]; then
+                    # Compare iteration numbers, break ties with lexicographic comparison
+                    # (timestamps like -20231225-123456 sort correctly)
+                    if [[ "$iter" -gt "$latest_iter" ]] || \
+                       [[ "$iter" -eq "$latest_iter" && "$dir_name" > "$latest_dir_name" ]]; then
+                        latest_iter="$iter"
+                        latest_archive="$archive_dir"
+                        latest_dir_name="$dir_name"
+                    fi
+                fi
+            fi
+        done
+
+        if [[ -z "$latest_archive" ]]; then
+            return 0
+        fi
+
+        echo "## Previous Reviews (Iteration $latest_iter)"
+        echo ""
+        echo "You have access to the reviews from your previous iteration. Use these to understand what issues were raised and ensure they have been addressed."
+        echo ""
+
+        for reviewer_file in "$latest_archive"/*.json; do
+            if [[ -f "$reviewer_file" ]]; then
+                local reviewer_name
+                reviewer_name=$(basename "$reviewer_file" .json)
+
+                # Skip non-review files
+                case "$reviewer_name" in
+                    review-schema|review) continue ;;
+                esac
+
+                echo "### Previous Review: $reviewer_name"
+                echo ""
+
+                # Try to extract and format the review using robust JSON extraction
+                local review_json=""
+                if review_json=$(extract_last_json_object "$reviewer_file" 2>/dev/null); then
+                    # Unwrap if needed (handle codex/gemini output formats)
+                    review_json=$(unwrap_review_json "$review_json" 2>/dev/null || echo "$review_json")
+
+                    local verdict summary issues
+                    verdict=$(echo "$review_json" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+                    summary=$(echo "$review_json" | jq -r '.summary // ""' 2>/dev/null || echo "")
+                    issues=$(echo "$review_json" | jq -r '.issues // [] | .[]' 2>/dev/null || echo "")
+
+                    echo "**Verdict:** $verdict"
+                    if [[ -n "$summary" && "$summary" != "null" ]]; then
+                        echo "**Summary:** $summary"
+                    fi
+                    if [[ -n "$issues" ]]; then
+                        echo "**Issues:**"
+                        while IFS= read -r issue; do
+                            echo "- $issue"
+                        done <<< "$issues"
+                    fi
+                else
+                    echo "(Could not parse review output)"
+                fi
+                echo ""
+            fi
+        done
+    }
+
     # --- Build review prompt ---
     build_prompt() {
         local artifact_path="$1"
@@ -289,6 +381,9 @@ DEFAULT
 
         local criteria
         criteria=$(resolve_template "$review_type")
+
+        local previous_reviews
+        previous_reviews=$(get_previous_reviews)
 
         cat <<PROMPT
 You are reviewing an artifact for quality and correctness.
@@ -301,6 +396,15 @@ $content
 \`\`\`
 
 $criteria
+PROMPT
+
+        # Include previous reviews if available
+        if [[ -n "$previous_reviews" ]]; then
+            echo ""
+            echo "$previous_reviews"
+        fi
+
+        cat <<PROMPT
 
 ## Output Format
 JSON only, no markdown code fences:
@@ -850,7 +954,7 @@ print(json.dumps(result))
 PY
     }
 
-    unwrap_review_json() {
+    unwrap_review_json_logged() {
         local json="$1"
         if [[ -z "$json" ]]; then
             return 1
@@ -858,23 +962,13 @@ PY
 
         log "review-gate: unwrap review json (len=${#json})"
 
-        if echo "$json" | jq -e '.structured_output' >/dev/null 2>&1; then
-            json=$(echo "$json" | jq -c '.structured_output' 2>/dev/null || echo "")
-        fi
-
-        if [[ -n "$json" ]] && echo "$json" | jq -e '.response' >/dev/null 2>&1; then
-            local response
-            response=$(echo "$json" | jq -r '.response' 2>/dev/null || echo "")
-            if [[ -n "$response" ]] && echo "$response" | jq -e . >/dev/null 2>&1; then
-                json=$(echo "$response" | jq -c '.' 2>/dev/null || echo "")
-            fi
-        fi
-
-        if [[ -z "$json" ]]; then
+        # Use shared unwrap function from lib
+        local result
+        if ! result=$(unwrap_review_json "$json"); then
             return 1
         fi
 
-        echo "$json"
+        echo "$result"
     }
 
     extract_json() {
@@ -983,8 +1077,17 @@ PY
         rm -f "$ITERATION_FILE"
     }
 
+    # --- Archive previous reviews (in check context) ---
+    archive_previous_reviews_check() {
+        local iteration
+        iteration=$(get_iteration)
+        # Use shared archive function (outputs archive path to stderr for logging)
+        archive_reviews "$REVIEW_DIR" "$REVIEWS_DIR" "$iteration"
+    }
+
     # --- Clean state for re-review ---
     clean_for_rerun() {
+        archive_previous_reviews_check
         rm -f "$STATE_FILE"
         rm -rf "$REVIEWS_DIR"
     }
@@ -1305,11 +1408,12 @@ Please manually review and decide:
         # Collect issues from non-PASS reviews
         ISSUES=$(collect_issues)
 
+        # Clean state so reviewers will be re-spawned after revision
+        # (Archive uses the current iteration number, so do this before incrementing.)
+        clean_for_rerun
+
         # Increment iteration for next round
         increment_iteration
-
-        # Clean state so reviewers will be re-spawned after revision
-        clean_for_rerun
 
         log "review-gate: revision required; incremented iteration"
         REASON="$RESULTS
