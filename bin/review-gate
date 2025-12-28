@@ -225,7 +225,7 @@ USAGE
     fi
 
     # Spawn Gemini (yolo for auto tool approval, prompt enforces read-only)
-    local gemini_model="${GEMINI_MODEL:-gemini-2.5-flash}"
+    local gemini_model="${GEMINI_MODEL:-gemini-3-flash-preview}"
     if command -v gemini >/dev/null 2>&1; then
         echo "Spawning Gemini generator (model: $gemini_model)..." >&2
         (
@@ -997,7 +997,7 @@ PROMPT
                 REVIEW_FAIL="$failed_file" \
                 REVIEW_PROMPT="$prompt_file" \
                 nohup setsid bash -c '
-                    if gemini -m gemini-2.5-flash -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                    if gemini -m gemini-3-flash-preview -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                         touch "$REVIEW_DONE"
                     else
                         touch "$REVIEW_FAIL"
