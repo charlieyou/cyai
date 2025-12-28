@@ -68,7 +68,7 @@ Multi-model consensus review system that gates Claude Code session termination u
 ### Purpose
 
 When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), the review gate:
-1. Spawns three AI reviewers (Claude, Codex, Gemini) to analyze the artifact in parallel
+1. Spawns two AI reviewers (Codex, Gemini) to analyze the artifact in parallel
 2. Blocks session termination until all reviewers complete
 3. Presents a consensus table with verdicts (PASS/FAIL/NEEDS_WORK)
 4. Requires you to decide: PROCEED, REVISE, or ABORT
@@ -96,7 +96,7 @@ This ensures AI-generated artifacts get multi-perspective review before you act 
 4. Once complete, hook presents results table and prompts for decision
 5. You run `review-gate-resolve proceed` (or revise/abort) to unblock
 
-**Auto-approval:** If all 3 reviewers return PASS (or 2/3 PASS with ≥70% confidence), the gate auto-approves.
+**Auto-approval:** If all reviewers return PASS, the gate auto-approves.
 
 ### Usage
 
@@ -180,6 +180,29 @@ The 60-second timeout is sufficient for the check script to:
 - Present results
 
 If you experience timeouts with slow network connections, you can increase this value.
+
+### Adding Review Gate to a Command
+
+To make a command automatically trigger the review gate, add this section at the end of your command's markdown file:
+
+```markdown
+---
+
+## Final Step
+
+After completing the review, use the Write tool to save this entire review output to `.review/latest.md`:
+
+\`\`\`
+Write the complete review above to .review/latest.md
+\`\`\`
+
+This enables automatic review gate validation if configured.
+```
+
+When Claude finishes executing the command and tries to stop, the Stop hook will:
+1. Detect the artifact at `.review/latest.md`
+2. Spawn reviewers automatically
+3. Block until you resolve with `review-gate-resolve`
 
 ### Scripts
 

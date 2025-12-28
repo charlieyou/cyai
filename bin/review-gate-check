@@ -1,26 +1,51 @@
 #!/usr/bin/env bash
-# review-gate-check - Stop hook for multi-model review gate
+# review-gate-check - Stop hook for multi-model review gate (AUTONOMOUS MODE)
 #
 # Reads Stop hook JSON from stdin and manages the review gate lifecycle:
 # 1. Allows resolve command through (prevents deadlock)
-# 2. Exits 0 if no artifact exists
+# 2. Exits 0 if no artifact exists and no active state
 # 3. Spawns reviewers if artifact exists but no state file
 # 4. Reports progress if reviewers still running
-# 5. Presents formatted results when all complete
+# 5. When all complete: auto-approve if all PASS, otherwise request revision
 # 6. Handles stale state (>30 min) by cleaning up
+# 7. AUTONOMOUS: Keeps requesting revisions until all reviewers agree (PASS)
 #
 # Acceptance Criteria Implementation:
-# - [AC1] Exits 0 immediately if resolve command detected: L50-53
-# - [AC2] Exits 0 if no .review/latest.md exists: L58-60
-# - [AC3] Spawns reviewers if artifact exists but no state file: L62-68
-# - [AC4] Reports progress if reviewers still running: check_progress() L95-133
-# - [AC5] Presents formatted results table when all complete: format_results() L168-228
-# - [AC6] Handles stale state (>30 min) by cleaning up: L74-82
-# - [AC7] NEEDS_WORK and FAIL verdicts require user decision: calculate_consensus() L135-166
-# - [AC8] Strips markdown code fences from JSON responses: extract_json() L84-93
-# - [AC9] Uses absolute paths: L24-27
+# - [AC1] Exits 0 immediately if resolve command detected
+# - [AC2] Exits 0 if no .review/latest.md exists and no active state
+# - [AC3] Spawns reviewers if artifact exists but no state file
+# - [AC4] Reports progress if reviewers still running
+# - [AC5] Presents formatted results table when all complete
+# - [AC6] Handles stale state (>30 min) by cleaning up
+# - [AC7] AUTONOMOUS: requires_decision triggers revision loop, not user prompt (all reviewers must PASS)
+# - [AC8] Strips markdown code fences from JSON responses
+# - [AC9] Uses absolute paths
+# - [AC10] Tracks iteration count to prevent infinite loops (max 5)
 
 set -euo pipefail
+
+# Resolve helper scripts relative to this file (works when symlinked)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+resolve_helper() {
+    local name="$1"
+    local path=""
+
+    if path=$(command -v "$name" 2>/dev/null); then
+        echo "$path"
+        return 0
+    fi
+
+    if [[ -x "$SCRIPT_DIR/$name" ]]; then
+        echo "$SCRIPT_DIR/$name"
+        return 0
+    fi
+
+    return 1
+}
+
+REVIEW_GATE_SPAWN="$(resolve_helper review-gate-spawn || true)"
+REVIEW_GATE_RESOLVE="$(resolve_helper review-gate-resolve || true)"
 
 # [AC9] Resolve project root via $CLAUDE_PROJECT_DIR or git root
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -28,9 +53,31 @@ REVIEW_DIR="$PROJECT_ROOT/.review"
 STATE_FILE="$REVIEW_DIR/gate-state.json"
 REVIEWS_DIR="$REVIEW_DIR/reviews"
 ARTIFACT_FILE="$REVIEW_DIR/latest.md"
+ITERATION_FILE="$REVIEW_DIR/iteration.txt"
+MAX_ITERATIONS=5
+MAX_WAIT_SECONDS="${REVIEW_GATE_MAX_WAIT_SECONDS:-90}"
+POLL_INTERVAL_SECONDS="${REVIEW_GATE_POLL_INTERVAL_SECONDS:-3}"
 
 # Read stop hook input from stdin
 INPUT=$(cat)
+
+# --- Session identification (to avoid cross-session blocking) ---
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // .sessionId // empty' 2>/dev/null || echo "")
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // .transcriptPath // empty' 2>/dev/null || echo "")
+
+SESSION_KEY=""
+SESSION_SOURCE=""
+
+if [[ -n "${REVIEW_GATE_SESSION_KEY:-}" ]]; then
+    SESSION_KEY="$REVIEW_GATE_SESSION_KEY"
+    SESSION_SOURCE="env.REVIEW_GATE_SESSION_KEY"
+elif [[ -n "$SESSION_ID" ]]; then
+    SESSION_KEY="$SESSION_ID"
+    SESSION_SOURCE="input.session_id"
+elif [[ -n "$TRANSCRIPT_PATH" ]]; then
+    SESSION_KEY="$TRANSCRIPT_PATH"
+    SESSION_SOURCE="input.transcript_path"
+fi
 
 # --- Helper: Output block JSON ---
 output_block() {
@@ -44,65 +91,219 @@ output_allow() {
     exit 0
 }
 
+# --- Helper: Compute sha256 (portable-ish) ---
+compute_sha256() {
+    local file="$1"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | cut -d' ' -f1
+        return 0
+    fi
+
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | cut -d' ' -f1
+        return 0
+    fi
+
+    return 1
+}
+
 # --- [AC1] Allowlist resolve command to prevent deadlock ---
 PENDING_CMD=$(echo "$INPUT" | jq -r '.pending_tool_input.command // ""' 2>/dev/null || echo "")
 if [[ "$PENDING_CMD" == *"review-gate-resolve"* ]]; then
     output_allow
 fi
 
-# --- [AC2] Exit 0 if no artifact exists ---
-if [[ ! -f "$ARTIFACT_FILE" ]]; then
+# --- Helper: Spawn reviewers for current artifact ---
+spawn_reviewers() {
+    if [[ -z "$REVIEW_GATE_SPAWN" ]]; then
+        output_block "Review gate error: review-gate-spawn not found in PATH or $SCRIPT_DIR"
+    fi
+
+    if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+       REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+       REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+       REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+       "$REVIEW_GATE_SPAWN" "$ARTIFACT_FILE" >/dev/null 2>&1; then
+        if [[ -f "$STATE_FILE" ]]; then
+            local status
+            status=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+            if [[ "$status" == "resolved" ]]; then
+                output_allow
+            fi
+        fi
+        output_block "Review gate spawned. Reviewers analyzing..."
+    fi
+
+    if ! command -v codex >/dev/null 2>&1 && ! command -v gemini >/dev/null 2>&1; then
+        output_allow
+    fi
+
+    output_block "Review gate error: failed to spawn reviewers. Run review-gate-spawn manually to inspect output."
+}
+
+# --- [AC6] Check for stale state (>30 min = 1800 seconds) ---
+cleanup_stale_state() {
+    rm -f "$STATE_FILE"
+    rm -f "$ITERATION_FILE"
+    rm -rf "$REVIEWS_DIR"
+}
+
+# --- Ensure state has an owner to avoid cross-session blocking ---
+ensure_state_owner() {
+    [[ -z "$SESSION_KEY" ]] && return 0
+    [[ ! -f "$STATE_FILE" ]] && return 0
+
+    local existing
+    existing=$(jq -r '.owner.session_key // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    if [[ -n "$existing" ]]; then
+        return 0
+    fi
+
+    local tmp="${STATE_FILE}.tmp.$$"
+    trap 'rm -f "$tmp"' RETURN
+
+    jq --arg key "$SESSION_KEY" \
+       --arg source "$SESSION_SOURCE" \
+       --arg session_id "$SESSION_ID" \
+       --arg transcript "$TRANSCRIPT_PATH" \
+       '.owner = (.owner // {}) |
+        (if $key != "" then .owner.session_key = $key else . end) |
+        (if $source != "" then .owner.source = $source else . end) |
+        (if $session_id != "" then .owner.session_id = $session_id else . end) |
+        (if $transcript != "" then .owner.transcript_path = $transcript else . end) |
+        (if (.owner | length) == 0 then .owner = null else . end)' \
+       "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
+# --- [AC2] Exit 0 if no artifact exists (when no active state) ---
+if [[ ! -f "$STATE_FILE" ]] && [[ ! -f "$ARTIFACT_FILE" ]]; then
     output_allow
 fi
 
-# --- [AC3] Artifact exists but no state file → spawn reviewers ---
-if [[ ! -f "$STATE_FILE" ]]; then
-    # Check for spawn script
-    SPAWN_SCRIPT="${PROJECT_ROOT}/bin/review-gate-spawn"
-    if [[ -x "$SPAWN_SCRIPT" ]]; then
-        "$SPAWN_SCRIPT" "$ARTIFACT_FILE" >&2 || true
-        output_block "Review gate spawned. Reviewers are analyzing the artifact..."
-    else
-        # No spawn script available, allow stop
-        output_allow
-    fi
-fi
+# --- If state exists, process it first (supports manual /review-gate paths) ---
+if [[ -f "$STATE_FILE" ]]; then
+    CREATED_AT=$(jq -r '.created_at // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    if [[ -n "$CREATED_AT" ]]; then
+        CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
+        NOW_EPOCH=$(date +%s)
+        AGE_SECONDS=$((NOW_EPOCH - CREATED_EPOCH))
 
-# --- [AC6] Check for stale state (>30 min = 1800 seconds) ---
-CREATED_AT=$(jq -r '.created_at // ""' "$STATE_FILE" 2>/dev/null || echo "")
-if [[ -n "$CREATED_AT" ]]; then
-    CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
-    NOW_EPOCH=$(date +%s)
-    AGE_SECONDS=$((NOW_EPOCH - CREATED_EPOCH))
-
-    if [[ $AGE_SECONDS -gt 1800 ]]; then
-        rm -f "$STATE_FILE"
-        rm -rf "$REVIEWS_DIR"
-        output_allow
+        if [[ $AGE_SECONDS -gt 1800 ]]; then
+            cleanup_stale_state
+            output_allow
+        fi
     fi
+    ensure_state_owner
 fi
 
 # --- [AC8] Extract JSON from potential markdown code fences ---
 extract_json() {
     local file="$1"
-    # Try raw JSON first
-    if jq -e . "$file" 2>/dev/null; then
-        return 0
+    local json=""
+
+    # 1) Raw JSON file
+    if jq -e . "$file" >/dev/null 2>&1; then
+        json=$(cat "$file")
+    else
+        # 2) JSON inside markdown code fences
+        local fenced
+        fenced=$(sed -n '/^```/,/^```/p' "$file" | sed '1d;$d')
+        if [[ -n "$fenced" ]] && echo "$fenced" | jq -e . >/dev/null 2>&1; then
+            json="$fenced"
+        else
+            # 3) Mixed output: extract first JSON object with Python
+            json=$(python - <<'PY' "$file"
+import json, sys
+path = sys.argv[1]
+text = open(path, "r", errors="ignore").read()
+decoder = json.JSONDecoder()
+for i, ch in enumerate(text):
+    if ch != "{":
+        continue
+    try:
+        obj, _ = decoder.raw_decode(text[i:])
+        print(json.dumps(obj))
+        sys.exit(0)
+    except Exception:
+        pass
+sys.exit(1)
+PY
+            ) || return 1
+        fi
     fi
-    # Strip markdown code fences and try again
-    sed -n '/^```/,/^```/p' "$file" | sed '1d;$d' | jq -e . 2>/dev/null
+
+    # If wrapped in structured_output, unwrap it
+    if echo "$json" | jq -e '.structured_output' >/dev/null 2>&1; then
+        echo "$json" | jq -c '.structured_output'
+    else
+        echo "$json"
+    fi
 }
 
-# --- Check status ---
-STATUS=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+# --- Get/increment iteration count ---
+get_iteration() {
+    if [[ -f "$ITERATION_FILE" ]]; then
+        cat "$ITERATION_FILE"
+    else
+        echo "0"
+    fi
+}
 
-# Already resolved, allow stop
+increment_iteration() {
+    local current
+    current=$(get_iteration)
+    echo $((current + 1)) > "$ITERATION_FILE"
+}
+
+reset_iteration() {
+    rm -f "$ITERATION_FILE"
+}
+
+# --- Clean state for re-review ---
+clean_for_rerun() {
+    rm -f "$STATE_FILE"
+    rm -rf "$REVIEWS_DIR"
+}
+
+# --- Check status (if state exists) ---
+STATUS="unknown"
+if [[ -f "$STATE_FILE" ]]; then
+    STATUS=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+fi
+
+# --- Skip gate for other sessions when state has an owner (pending/awaiting only) ---
+if [[ -f "$STATE_FILE" && "$STATUS" != "resolved" ]]; then
+    OWNER_KEY=$(jq -r '.owner.session_key // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    if [[ -n "$OWNER_KEY" ]]; then
+        if [[ -z "$SESSION_KEY" || "$OWNER_KEY" != "$SESSION_KEY" ]]; then
+            output_allow
+        fi
+    fi
+fi
+
+# If resolved, allow stop unless a new artifact is present
 if [[ "$STATUS" == "resolved" ]]; then
+    if [[ -f "$ARTIFACT_FILE" ]]; then
+        STATE_SHA=$(jq -r '.artifact.sha256 // ""' "$STATE_FILE" 2>/dev/null || echo "")
+        CURRENT_SHA=$(compute_sha256 "$ARTIFACT_FILE" 2>/dev/null || echo "")
+
+        if [[ -n "$STATE_SHA" && -n "$CURRENT_SHA" && "$STATE_SHA" != "$CURRENT_SHA" ]]; then
+            cleanup_stale_state
+            reset_iteration
+            spawn_reviewers
+        fi
+    fi
     output_allow
 fi
 
+# --- [AC3] Artifact exists but no state file → spawn reviewers ---
+if [[ ! -f "$STATE_FILE" ]]; then
+    spawn_reviewers
+fi
+
 # --- [AC4] Check progress of reviewers ---
-check_progress() {
+check_progress_raw() {
     local reviewers
     reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
 
@@ -126,19 +327,10 @@ check_progress() {
         fi
     done
 
-    if [[ $completed -lt $total ]]; then
-        local progress_msg="Review gate: ${completed}/${total} reviewers complete."
-        if [[ ${#running_list[@]} -gt 0 ]]; then
-            progress_msg+=" Waiting for: ${running_list[*]}"
-        fi
-        output_block "$progress_msg"
-    fi
-
-    # All complete, return to continue processing
-    return 0
+    echo "$completed|$total|${running_list[*]}"
 }
 
-# --- [AC7] Calculate consensus ---
+# --- [AC7] Calculate consensus (AUTONOMOUS MODE - requires all reviewers to PASS) ---
 calculate_consensus() {
     local reviewers
     reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
@@ -146,7 +338,6 @@ calculate_consensus() {
     local pass_count=0
     local fail_count=0
     local other_count=0
-    local total_confidence=0
     local reviewer_count=0
 
     for reviewer in $reviewers; do
@@ -172,9 +363,6 @@ calculate_consensus() {
         local verdict
         verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
 
-        local confidence
-        confidence=$(echo "$result" | jq -r '.confidence // 0' 2>/dev/null || echo "0")
-
         case "$verdict" in
             PASS)
                 ((pass_count++)) || true
@@ -187,46 +375,25 @@ calculate_consensus() {
                 ;;
         esac
 
-        total_confidence=$(echo "$total_confidence + $confidence" | bc)
         ((reviewer_count++)) || true
     done
 
-    # Calculate average confidence
-    local avg_confidence=0
-    if [[ $reviewer_count -gt 0 ]]; then
-        avg_confidence=$(echo "scale=2; $total_confidence / $reviewer_count" | bc)
-    fi
+    # AUTONOMOUS MODE: Only auto-approve if ALL available reviewers PASS
+    # Any other combination requires revision
 
-    # Determine if auto-approval is possible
-    # Must have exactly 3 reviewers for auto-approval
-    if [[ $reviewer_count -ne 3 ]]; then
+    # Need at least 1 reviewer
+    if [[ $reviewer_count -lt 1 ]]; then
         echo "requires_decision"
         return
     fi
 
-    # Any FAIL → require user decision
-    if [[ $fail_count -gt 0 ]]; then
-        echo "requires_decision"
-        return
-    fi
-
-    # 3/3 PASS → auto-approve
-    if [[ $pass_count -eq 3 ]]; then
+    # All reviewers PASS → auto-approve
+    if [[ $pass_count -eq $reviewer_count ]]; then
         echo "auto_approve"
         return
     fi
 
-    # 2/3 PASS with confidence ≥0.7 AND no FAIL → auto-approve
-    if [[ $pass_count -eq 2 ]] && [[ $fail_count -eq 0 ]]; then
-        local threshold_met
-        threshold_met=$(echo "$avg_confidence >= 0.7" | bc)
-        if [[ "$threshold_met" == "1" ]]; then
-            echo "auto_approve"
-            return
-        fi
-    fi
-
-    # Otherwise require decision
+    # Anything else requires revision
     echo "requires_decision"
 }
 
@@ -270,11 +437,91 @@ format_results() {
     echo -e "$table"
 }
 
-# Check if all reviewers are complete
-check_progress
+# --- Collect all issues from reviews ---
+collect_issues() {
+    local reviewers
+    reviewers=$(jq -r '.reviewers | keys[]' "$STATE_FILE" 2>/dev/null || echo "")
+
+    local all_issues=""
+
+    for reviewer in $reviewers; do
+        local output_file="$REVIEWS_DIR/${reviewer}.json"
+        local failed_file="$REVIEWS_DIR/${reviewer}.failed"
+
+        if [[ -f "$failed_file" ]]; then
+            continue
+        fi
+
+        if [[ -f "$output_file" ]]; then
+            local result
+            result=$(extract_json "$output_file" 2>/dev/null || echo '{}')
+
+            local verdict
+            verdict=$(echo "$result" | jq -r '.verdict // "UNCLEAR"' 2>/dev/null || echo "UNCLEAR")
+
+            # Only collect issues from non-PASS reviews
+            if [[ "$verdict" != "PASS" ]]; then
+                local issues
+                issues=$(echo "$result" | jq -r '.issues // [] | .[]' 2>/dev/null || echo "")
+                local summary
+                summary=$(echo "$result" | jq -r '.summary // ""' 2>/dev/null || echo "")
+
+                if [[ -n "$issues" || -n "$summary" ]]; then
+                    all_issues+="### $reviewer ($verdict)\n"
+                    if [[ -n "$summary" ]]; then
+                        all_issues+="Summary: $summary\n"
+                    fi
+                    if [[ -n "$issues" ]]; then
+                        all_issues+="Issues:\n"
+                        while IFS= read -r issue; do
+                            all_issues+="- $issue\n"
+                        done <<< "$issues"
+                    fi
+                    all_issues+="\n"
+                fi
+            fi
+        fi
+    done
+
+    echo -e "$all_issues"
+}
+
+# Check if all reviewers are complete (optionally wait/poll)
+START_TIME=$(date +%s)
+while true; do
+    PROGRESS=$(check_progress_raw)
+    IFS='|' read -r COMPLETED TOTAL RUNNING <<< "$PROGRESS"
+
+    if [[ "$COMPLETED" -ge "$TOTAL" ]]; then
+        break
+    fi
+
+    if [[ "$MAX_WAIT_SECONDS" -gt 0 ]]; then
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - START_TIME))
+        if [[ "$ELAPSED" -ge "$MAX_WAIT_SECONDS" ]]; then
+            progress_msg="Review gate: ${COMPLETED}/${TOTAL} reviewers complete."
+            if [[ -n "$RUNNING" ]]; then
+                progress_msg+=" Waiting for: $RUNNING"
+            fi
+            output_block "$progress_msg"
+        fi
+        sleep "$POLL_INTERVAL_SECONDS"
+        continue
+    fi
+
+    progress_msg="Review gate: ${COMPLETED}/${TOTAL} reviewers complete."
+    if [[ -n "$RUNNING" ]]; then
+        progress_msg+=" Waiting for: $RUNNING"
+    fi
+    output_block "$progress_msg"
+done
 
 # Calculate consensus
 CONSENSUS=$(calculate_consensus)
+
+# Get current iteration
+CURRENT_ITERATION=$(get_iteration)
 
 # Update state to awaiting_decision
 TEMP_FILE="${STATE_FILE}.tmp.$$"
@@ -282,7 +529,8 @@ trap 'rm -f "$TEMP_FILE"' EXIT
 
 jq --arg status "awaiting_decision" \
    --arg consensus "$CONSENSUS" \
-   '.status = $status | .consensus = {verdict: $consensus, requires_user_decision: ($consensus == "requires_decision")}' \
+   --argjson iteration "$CURRENT_ITERATION" \
+   '.status = $status | .consensus = {verdict: $consensus, iteration: $iteration}' \
    "$STATE_FILE" > "$TEMP_FILE"
 mv "$TEMP_FILE" "$STATE_FILE"
 
@@ -290,21 +538,57 @@ mv "$TEMP_FILE" "$STATE_FILE"
 RESULTS=$(format_results)
 
 if [[ "$CONSENSUS" == "auto_approve" ]]; then
-    # Auto-approve: resolve and allow stop
-    review-gate-resolve proceed >&2 || true
+    # All reviewers agree - resolve and allow stop
+    reset_iteration
+    if [[ -n "$REVIEW_GATE_RESOLVE" ]]; then
+        "$REVIEW_GATE_RESOLVE" proceed >&2 || true
+    else
+        review-gate-resolve proceed >&2 || true
+    fi
     output_allow
 else
-    # Require user decision
+    # [AC7] AUTONOMOUS MODE: Not all reviewers agree - request revision
+
+    # Check iteration limit
+    if [[ $CURRENT_ITERATION -ge $MAX_ITERATIONS ]]; then
+        # Too many iterations - give up and let user decide
+        REASON="$RESULTS
+
+---
+
+**Max iterations ($MAX_ITERATIONS) reached without consensus.**
+
+Please manually review and decide:
+- Run \`review-gate-resolve proceed\` to accept anyway
+- Run \`review-gate-resolve abort\` to discard"
+
+        output_block "$REASON"
+        exit 0
+    fi
+
+    # Collect issues from non-PASS reviews
+    ISSUES=$(collect_issues)
+
+    # Increment iteration for next round
+    increment_iteration
+
+    # Clean state so reviewers will be re-spawned after revision
+    clean_for_rerun
+
+    # Request revision with specific issues
     REASON="$RESULTS
 
 ---
 
-**Action Required**: Please review the results and respond with one of:
-- **PROCEED**: Accept the artifact and continue
-- **REVISE**: Make changes based on feedback
-- **ABORT**: Discard and start over
+## Revision Required (Iteration $((CURRENT_ITERATION + 1))/$MAX_ITERATIONS)
 
-After deciding, run: \`review-gate-resolve <proceed|revise|abort>\`"
+**All reviewers must agree (PASS) before proceeding.**
+
+Please revise \`.review/latest.md\` to address the following issues:
+
+$ISSUES
+
+After updating the artifact, the review will automatically re-run."
 
     output_block "$REASON"
 fi
