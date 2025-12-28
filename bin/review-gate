@@ -54,19 +54,43 @@ die() {
 }
 
 find_latest_transcript() {
-    local project_hash base_dir latest
+    local project_hash base_dir
     project_hash=$(get_project_hash "")
     base_dir="$HOME/.claude/projects/$project_hash"
 
     [[ -d "$base_dir" ]] || return 1
 
-    latest=$(ls -t "$base_dir"/*.jsonl 2>/dev/null | grep -v '/agent-' | head -n 1 || true)
-    if [[ -z "$latest" ]]; then
-        latest=$(ls -t "$base_dir"/agent-*.jsonl 2>/dev/null | head -n 1 || true)
+    # Get transcripts sorted by modification time (newest first)
+    local transcripts
+    transcripts=$(ls -t "$base_dir"/*.jsonl 2>/dev/null | grep -v '/agent-' || true)
+    if [[ -z "$transcripts" ]]; then
+        transcripts=$(ls -t "$base_dir"/agent-*.jsonl 2>/dev/null || true)
     fi
 
-    [[ -n "$latest" ]] || return 1
-    echo "$latest"
+    [[ -n "$transcripts" ]] || return 1
+
+    # Find the first transcript that doesn't have an active review gate
+    local transcript session_id state_file status
+    while IFS= read -r transcript; do
+        [[ -z "$transcript" ]] && continue
+        session_id=$(basename "$transcript" .jsonl)
+        state_file="$base_dir/review-gate/$session_id/gate-state.json"
+
+        if [[ -f "$state_file" ]]; then
+            status=$(jq -r '.status // "unknown"' "$state_file" 2>/dev/null || echo "unknown")
+            # Skip sessions with active review gates
+            if [[ "$status" == "pending" || "$status" == "awaiting_decision" ]]; then
+                continue
+            fi
+        fi
+
+        # Found a transcript without active gate
+        echo "$transcript"
+        return 0
+    done <<< "$transcripts"
+
+    # Fallback: return newest if all have active gates (shouldn't happen)
+    echo "$transcripts" | head -n 1
 }
 
 # --- Helper: Compute sha256 (portable-ish) ---
@@ -203,7 +227,7 @@ USAGE
     fi
 
     # Spawn Gemini (yolo for auto tool approval, prompt enforces read-only)
-    local gemini_model="${GEMINI_MODEL:-gemini-3.0-flash}"
+    local gemini_model="${GEMINI_MODEL:-gemini-3.0-flash-preview}"
     if command -v gemini >/dev/null 2>&1; then
         echo "Spawning Gemini generator (model: $gemini_model)..." >&2
         (
@@ -277,6 +301,8 @@ USAGE
 
     if [[ $draft_count -eq 0 ]]; then
         die "No drafts generated. Check generator availability."
+    elif [[ $draft_count -eq 1 ]]; then
+        echo "Warning: Only one generator succeeded. Proceeding with partial results." >&2
     fi
 
     # Output drafts for synthesis
@@ -636,16 +662,8 @@ USAGE
         esac
     done
 
-    if [[ -z "$transcript_path" ]]; then
-        transcript_path="$(find_latest_transcript || true)"
-    fi
-
-    if [[ -z "$session_id" && -n "$transcript_path" ]]; then
-        session_id="$(basename "$transcript_path" .jsonl)"
-    fi
-
     if [[ -z "$session_id" ]]; then
-        die "Unable to determine session id. Set REVIEW_GATE_SESSION_ID or pass --session-id."
+        die "Unable to determine session id. Set CLAUDE_SESSION_ID (via SessionStart hook) or pass --session-id."
     fi
 
     local review_dir
