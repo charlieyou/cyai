@@ -21,6 +21,10 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 # Source shared library
 source "$SCRIPT_DIR/review-gate-lib.sh"
 
+# Model defaults (override with env vars)
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.2-codex}"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3-flash-preview}"
+
 usage() {
     cat <<'USAGE'
 Usage: review-gate <command> [args]
@@ -206,8 +210,7 @@ USAGE
     echo "Draft directory: $draft_dir" >&2
 
     # Spawn Codex (with repo access via read-only sandbox)
-    # Override with CODEX_MODEL env var for different models
-    local codex_model="${CODEX_MODEL:-gpt-5.2-codex}"
+    local codex_model="$CODEX_MODEL"
     if command -v codex >/dev/null 2>&1; then
         echo "Spawning Codex generator (model: $codex_model)..." >&2
         (
@@ -225,7 +228,7 @@ USAGE
     fi
 
     # Spawn Gemini (yolo for auto tool approval, prompt enforces read-only)
-    local gemini_model="${GEMINI_MODEL:-gemini-3-flash-preview}"
+    local gemini_model="$GEMINI_MODEL"
     if command -v gemini >/dev/null 2>&1; then
         echo "Spawning Gemini generator (model: $gemini_model)..." >&2
         (
@@ -996,8 +999,9 @@ PROMPT
                 REVIEW_DONE="$sentinel_file" \
                 REVIEW_FAIL="$failed_file" \
                 REVIEW_PROMPT="$prompt_file" \
+                REVIEW_MODEL="$GEMINI_MODEL" \
                 nohup setsid bash -c '
-                    if gemini -m gemini-3-flash-preview -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                    if gemini -m "$REVIEW_MODEL" -o json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                         touch "$REVIEW_DONE"
                     else
                         touch "$REVIEW_FAIL"
@@ -1010,8 +1014,9 @@ PROMPT
                 REVIEW_FAIL="$failed_file" \
                 REVIEW_PROMPT="$prompt_file" \
                 REVIEW_SCHEMA="$schema_file" \
+                REVIEW_MODEL="$CODEX_MODEL" \
                 nohup setsid bash -c '
-                    if codex exec -m gpt-5.2-codex -c model_reasoning_effort=\"high\" -s read-only --output-schema "$REVIEW_SCHEMA" - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                    if codex exec -m "$REVIEW_MODEL" -c model_reasoning_effort=\"high\" -s read-only --output-schema "$REVIEW_SCHEMA" - < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
                         touch "$REVIEW_DONE"
                     else
                         touch "$REVIEW_FAIL"
