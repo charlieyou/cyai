@@ -219,13 +219,31 @@ When Claude finishes executing the command and tries to stop, the Stop hook will
 2. Spawn reviewers (Codex, Gemini) automatically
 3. Auto-approve if all reviewers PASS, or request revisions until they do
 
+### Multi-Model Generation
+
+Commands like `/healthcheck` use multi-model generation: Codex and Gemini analyze the codebase in parallel, then Claude synthesizes their drafts into a single artifact.
+
+**How it works:**
+1. Spawns Codex (gpt-5.2-codex) and Gemini (gemini-3.0-flash) in parallel
+2. Each model analyzes the codebase independently with read-only access
+3. Waits for both to complete (10 minute timeout)
+4. Claude synthesizes drafts into final artifact
+
+**Generator prompts** are stored in `~/.claude/review-generators/<type>.md`.
+
+**Environment variables:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEX_MODEL` | `gpt-5.2-codex` | Model for Codex generator |
+| `GEMINI_MODEL` | `gemini-3.0-flash` | Model for Gemini generator |
+
 ### Scripts
 
 The review gate system uses these scripts in `~/.local/bin/`:
 
 | Script | Purpose |
 |--------|---------|
-| `review-gate` | Multi-model review gate entrypoint (check/spawn/resolve/artifact-path) |
+| `review-gate` | Multi-model review gate entrypoint (check/spawn/resolve/artifact-path/generate) |
 
 ### Type-Specific Review Prompts
 
