@@ -68,7 +68,7 @@ Multi-model consensus review system that gates Claude Code session termination u
 ### Purpose
 
 When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), the review gate:
-1. Spawns two AI reviewers (Codex, Gemini) to analyze the artifact in parallel
+1. Spawns three AI reviewers (Codex, Gemini, Claude) to analyze the artifact in parallel
 2. Blocks session termination until all reviewers complete
 3. **Automatically loops** until all reviewers agree (PASS)
 4. Falls back to manual decision after 5 iterations
@@ -78,10 +78,10 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 ### How It Works
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ Artifact saved  │────▶│ Stop hook fires  │────▶│ Spawn reviewers │
-│ session latest  │     │ review-gate check│     │ codex / gemini  │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────────┐
+│ Artifact saved  │────▶│ Stop hook fires  │────▶│  Spawn reviewers    │
+│ session latest  │     │ review-gate check│     │codex/gemini/claude  │
+└─────────────────┘     └──────────────────┘     └─────────────────────┘
                                                           │
                                                           ▼
                                ┌──────────────────────────────────────┐
@@ -100,7 +100,7 @@ This ensures AI-generated artifacts get multi-perspective review with automatic 
 **Autonomous flow:**
 1. Commands like `/healthcheck` save artifacts to the session-scoped `latest.md` (use `review-gate artifact-path`)
 2. When Claude tries to stop, the Stop hook detects the artifact
-3. Reviewers (Codex, Gemini) spawn in background
+3. Reviewers (Codex, Gemini, Claude) spawn in background
 4. Hook polls until all reviewers complete (configurable timeout)
 5. **All PASS** → auto-approve, session allowed to stop
 6. **Not all PASS** → presents issues and blocks for revision
@@ -127,7 +127,7 @@ review-gate resolve abort     # Discard the artifact
 
 1. Run `./link-all.sh` to install the review-gate scripts to `~/.local/bin/`
 2. Ensure `~/.local/bin` is in your PATH
-3. Have `codex` and/or `gemini` CLIs installed (missing ones are skipped with warning)
+3. Have `codex`, `gemini`, and/or `claude` CLIs installed (missing ones are skipped with warning)
 
 ### Hook Configuration
 
@@ -216,17 +216,17 @@ This enables automatic review gate validation if configured.
 
 When Claude finishes executing the command and tries to stop, the Stop hook will:
 1. Detect the artifact at the session-scoped `latest.md`
-2. Spawn reviewers (Codex, Gemini) automatically
+2. Spawn reviewers (Codex, Gemini, Claude) automatically
 3. Auto-approve if all reviewers PASS, or request revisions until they do
 
 ### Multi-Model Generation
 
-Commands like `/healthcheck` use multi-model generation: Codex and Gemini analyze the codebase in parallel, then Claude synthesizes their drafts into a single artifact.
+Commands like `/healthcheck` use multi-model generation: Codex, Gemini, and Claude analyze the codebase in parallel, then Claude synthesizes their drafts into a single artifact.
 
 **How it works:**
-1. Spawns Codex (gpt-5.2-codex) and Gemini (gemini-3.0-flash) in parallel
+1. Spawns Codex (gpt-5.2-codex), Gemini (gemini-3-flash-preview), and Claude (opus) in parallel
 2. Each model analyzes the codebase independently with read-only access
-3. Waits for both to complete (10 minute timeout)
+3. Waits for all to complete (10 minute timeout)
 4. Claude synthesizes drafts into final artifact
 
 **Generator prompts** are stored in `~/.claude/review-generators/<type>.md`.
@@ -234,8 +234,9 @@ Commands like `/healthcheck` use multi-model generation: Codex and Gemini analyz
 **Environment variables:**
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CODEX_MODEL` | `gpt-5.2-codex` | Model for Codex generator |
-| `GEMINI_MODEL` | `gemini-3.0-flash` | Model for Gemini generator |
+| `CODEX_MODEL` | `gpt-5.2-codex` | Model for Codex generator/reviewer |
+| `GEMINI_MODEL` | `gemini-3-flash-preview` | Model for Gemini generator/reviewer |
+| `CLAUDE_MODEL` | `opus` | Model for Claude generator/reviewer |
 
 ### Scripts
 

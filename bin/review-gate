@@ -24,6 +24,7 @@ source "$SCRIPT_DIR/review-gate-lib.sh"
 # Model defaults (override with env vars)
 CODEX_MODEL="${CODEX_MODEL:-gpt-5.2-codex}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-3-flash-preview}"
+CLAUDE_MODEL="${CLAUDE_MODEL:-opus}"
 
 usage() {
     cat <<'USAGE'
@@ -53,8 +54,8 @@ Commands:
     Print the session-scoped review artifact path.
 
   generate [--type <healthcheck|architecture-review>]
-    Spawn generators (Codex, Gemini) to analyze the codebase and output drafts.
-    Drafts are printed to stdout for synthesis by Claude.
+    Spawn generators (Codex, Gemini, Claude) to analyze the codebase and output drafts.
+    Drafts are printed to stdout for synthesis.
 USAGE
 }
 
@@ -160,7 +161,7 @@ Options:
   --prompt-file <path>  Path to custom prompt file
   --prompt <text>       Inline prompt text
 
-Spawns generators (Codex, Gemini) to analyze the codebase. Outputs drafts to stdout.
+Spawns generators (Codex, Gemini, Claude) to analyze the codebase. Outputs drafts to stdout.
 USAGE
                 return 0
                 ;;
@@ -197,10 +198,13 @@ USAGE
 
     local codex_draft="$draft_dir/draft-codex.md"
     local gemini_draft="$draft_dir/draft-gemini.md"
+    local claude_draft="$draft_dir/draft-claude.md"
     local codex_done="$draft_dir/codex.done"
     local gemini_done="$draft_dir/gemini.done"
+    local claude_done="$draft_dir/claude.done"
     local codex_failed="$draft_dir/codex.failed"
     local gemini_failed="$draft_dir/gemini.failed"
+    local claude_failed="$draft_dir/claude.failed"
 
     # Write prompt to temp file for generators
     local prompt_tmp="$draft_dir/prompt.md"
@@ -245,7 +249,25 @@ USAGE
         local pid_gemini=""
     fi
 
-    # Wait for both generators
+    # Spawn Claude (print mode, no interaction, stdin for prompt)
+    local claude_model="$CLAUDE_MODEL"
+    if command -v claude >/dev/null 2>&1; then
+        echo "Spawning Claude generator (model: $claude_model)..." >&2
+        (
+            if echo "$prompt_content" | claude -p --model "$claude_model" > "$claude_draft" 2>&1; then
+                touch "$claude_done"
+            else
+                touch "$claude_failed"
+            fi
+        ) &
+        local pid_claude=$!
+    else
+        echo "Warning: claude not found, skipping" >&2
+        touch "$claude_failed"
+        local pid_claude=""
+    fi
+
+    # Wait for all generators
     echo "Waiting for generators to complete..." >&2
     local wait_start
     wait_start=$(date +%s)
@@ -254,11 +276,13 @@ USAGE
     while true; do
         local codex_complete=false
         local gemini_complete=false
+        local claude_complete=false
 
         [[ -f "$codex_done" || -f "$codex_failed" ]] && codex_complete=true
         [[ -f "$gemini_done" || -f "$gemini_failed" ]] && gemini_complete=true
+        [[ -f "$claude_done" || -f "$claude_failed" ]] && claude_complete=true
 
-        if $codex_complete && $gemini_complete; then
+        if $codex_complete && $gemini_complete && $claude_complete; then
             break
         fi
 
@@ -268,6 +292,7 @@ USAGE
             # Kill any remaining processes
             [[ -n "${pid_codex:-}" ]] && kill "$pid_codex" 2>/dev/null || true
             [[ -n "${pid_gemini:-}" ]] && kill "$pid_gemini" 2>/dev/null || true
+            [[ -n "${pid_claude:-}" ]] && kill "$pid_claude" 2>/dev/null || true
             break
         fi
 
@@ -296,6 +321,16 @@ USAGE
         echo "Gemini: failed" >&2
     else
         echo "Gemini: timed out" >&2
+    fi
+
+    if [[ -f "$claude_done" && -f "$claude_draft" && -s "$claude_draft" ]]; then
+        ((draft_count++)) || true
+        drafts+=("$claude_draft")
+        echo "Claude: completed successfully" >&2
+    elif [[ -f "$claude_failed" ]]; then
+        echo "Claude: failed" >&2
+    else
+        echo "Claude: timed out" >&2
     fi
 
     echo "Completed: $draft_count drafts" >&2
@@ -1023,6 +1058,20 @@ PROMPT
                     fi
                 ' >/dev/null 2>&1 &
                 ;;
+            claude)
+                REVIEW_OUT="$output_file" \
+                REVIEW_DONE="$sentinel_file" \
+                REVIEW_FAIL="$failed_file" \
+                REVIEW_PROMPT="$prompt_file" \
+                REVIEW_MODEL="$CLAUDE_MODEL" \
+                nohup setsid bash -c '
+                    if claude -p --model "$REVIEW_MODEL" --output-format json < "$REVIEW_PROMPT" > "$REVIEW_OUT" 2>&1; then
+                        touch "$REVIEW_DONE"
+                    else
+                        touch "$REVIEW_FAIL"
+                    fi
+                ' >/dev/null 2>&1 &
+                ;;
             *)
                 echo "Unknown reviewer: $name" >&2
                 return 1
@@ -1161,7 +1210,7 @@ SCHEMA
     local reviewers_json='{}'
     local spawned=0
 
-    for reviewer in gemini codex; do
+    for reviewer in gemini codex claude; do
         if spawn_reviewer "$reviewer" "$reviewer" "$prompt_file" "$schema_file"; then
             reviewers_json=$(echo "$reviewers_json" | jq \
                 --arg name "$reviewer" \
@@ -1399,7 +1448,7 @@ review_gate_check() {
             return 0
         fi
 
-        if ! command -v codex >/dev/null 2>&1 && ! command -v gemini >/dev/null 2>&1; then
+        if ! command -v codex >/dev/null 2>&1 && ! command -v gemini >/dev/null 2>&1 && ! command -v claude >/dev/null 2>&1; then
             log "review-gate: reviewers missing; allowing stop"
             output_allow
         fi
@@ -1606,6 +1655,39 @@ PY
                 if [[ -n "$json" ]]; then
                     local preview="${json:0:200}"
                     log "review-gate: extract_json gemini preview: $preview"
+                fi
+                ;;
+            claude)
+                # Claude: --output-format json wraps result in metadata object
+                # Extract .result field which contains the actual response (may have markdown fences)
+                log "review-gate: extract_json claude extracting from metadata wrapper"
+                local result_str
+                result_str=$(jq -r '.result // empty' "$file" 2>/dev/null || true)
+                if [[ -n "$result_str" ]]; then
+                    # Try direct parse first (no fences)
+                    json=$(echo "$result_str" | jq -c '.' 2>/dev/null || true)
+                    if [[ -z "$json" ]]; then
+                        # Result may be wrapped in ```json fences, strip them
+                        local stripped
+                        stripped=$(echo "$result_str" | sed '/^```json$/d; /^```$/d')
+                        json=$(echo "$stripped" | jq -c '.' 2>/dev/null || true)
+                    fi
+                    if [[ -z "$json" ]]; then
+                        # Fallback to extract_last_json_object using temp file
+                        log "review-gate: extract_json claude trying extract_last_json_object on result"
+                        local tmp_file
+                        tmp_file=$(mktemp)
+                        echo "$result_str" > "$tmp_file"
+                        json=$(extract_last_json_object "$tmp_file" "false" 2>/dev/null || true)
+                        rm -f "$tmp_file"
+                    fi
+                fi
+                if [[ -n "$json" ]]; then
+                    log "review-gate: extract_json claude extracted len=${#json}"
+                    local preview="${json:0:200}"
+                    log "review-gate: extract_json claude preview: $preview"
+                else
+                    log "review-gate: extract_json claude FAILED to extract JSON"
                 fi
                 ;;
             *)
