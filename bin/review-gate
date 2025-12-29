@@ -47,6 +47,10 @@ Commands:
     most recent session plan from ~/.claude/plans/. Claude fixes plan until
     all reviewers pass.
 
+  spawn-spec-review <spec-path>
+    Spawn reviewers for a feature specification file. Claude fixes spec until
+    all reviewers pass.
+
   resolve <proceed|revise|abort>
     Resolve the active gate with a decision.
 
@@ -520,6 +524,7 @@ PROMPT
     local artifact_path="$review_dir/latest.md"
     cat > "$artifact_path" <<ARTIFACT
 <!-- review-type: code-review-iterative -->
+<!-- diff-args: $diff_args_str -->
 
 # Code Review (Iterative)
 
@@ -638,6 +643,7 @@ USAGE
     local artifact_path="$review_dir/latest.md"
     cat > "$artifact_path" <<ARTIFACT
 <!-- review-type: plan-review-iterative -->
+<!-- plan-path: $plan_path -->
 
 # Plan Review (Iterative)
 
@@ -670,6 +676,127 @@ ARTIFACT
     fi
 
     echo "Plan review spawned for: $plan_path" >&2
+}
+
+review_gate_spawn_spec_review() {
+    local spec_path=""
+
+    # --- Session metadata ---
+    local session_id="${REVIEW_GATE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}"
+    local transcript_path="${REVIEW_GATE_TRANSCRIPT_PATH:-${CLAUDE_TRANSCRIPT_PATH:-}}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --session-id)
+                session_id="${2:-}"
+                shift 2
+                ;;
+            --transcript-path)
+                transcript_path="${2:-}"
+                shift 2
+                ;;
+            -h|--help)
+                cat <<'USAGE'
+Usage: review-gate spawn-spec-review [options] <spec-path>
+
+Spawn reviewers for a feature specification file.
+
+Options:
+  --session-id <id>        Session ID for scoping
+  --transcript-path <path> Path to transcript file
+
+The reviewers will evaluate the spec for:
+- Clarity of goals and scope definition
+- Technical feasibility and completeness
+- Edge case coverage and testability
+- Actionability for implementation
+USAGE
+                return 0
+                ;;
+            --)
+                shift
+                break
+                ;;
+            -*)
+                die "Unknown option '$1'"
+                ;;
+            *)
+                spec_path="$1"
+                shift
+                break
+                ;;
+        esac
+    done
+
+    if [[ -z "$spec_path" ]]; then
+        die "Spec path is required. Usage: review-gate spawn-spec-review <spec-path>"
+    fi
+
+    if [[ ! -f "$spec_path" ]]; then
+        die "Spec file not found: $spec_path"
+    fi
+
+    spec_path=$(realpath "$spec_path")
+
+    # Resolve transcript and session ID if not provided
+    if [[ -z "$transcript_path" ]]; then
+        transcript_path="$(find_latest_transcript || true)"
+    fi
+
+    if [[ -z "$session_id" && -n "$transcript_path" ]]; then
+        session_id="$(basename "$transcript_path" .jsonl)"
+    fi
+
+    if [[ -z "$session_id" ]]; then
+        die "Unable to determine session id. Set REVIEW_GATE_SESSION_ID or CLAUDE_SESSION_ID."
+    fi
+
+    # --- Setup review directory ---
+    local review_dir
+    review_dir=$(resolve_review_dir "$session_id" "$transcript_path")
+    mkdir -p "$review_dir"
+
+    # --- Read spec content ---
+    local spec_content
+    spec_content=$(cat "$spec_path")
+
+    # --- Write artifact for review gate ---
+    local artifact_path="$review_dir/latest.md"
+    cat > "$artifact_path" <<ARTIFACT
+<!-- review-type: spec -->
+<!-- spec-path: $spec_path -->
+
+# Spec Review (Iterative)
+
+## Spec Path
+$spec_path
+
+## Spec Content
+
+<spec-content>
+$spec_content
+</spec-content>
+ARTIFACT
+
+    echo "Artifact written: $artifact_path" >&2
+
+    # --- Spawn reviewers using existing infrastructure ---
+    REVIEW_GATE_SESSION_ID="$session_id" \
+    REVIEW_GATE_TRANSCRIPT_PATH="$transcript_path" \
+    REVIEW_TYPE="spec" \
+    "$0" spawn --type="spec" "$artifact_path"
+
+    # Update state to include spec path in mode
+    local state_file="$review_dir/gate-state.json"
+    if [[ -f "$state_file" ]]; then
+        local temp_file="${state_file}.tmp.$$"
+        jq --arg spec_path "$spec_path" \
+           '.mode.spec_path = $spec_path | .mode.type = "spec"' \
+           "$state_file" > "$temp_file"
+        mv "$temp_file" "$state_file"
+    fi
+
+    echo "Spec review spawned for: $spec_path" >&2
 }
 
 review_gate_artifact_path() {
@@ -1421,6 +1548,27 @@ review_gate_check() {
         echo ""
     }
 
+    # --- Helper: Extract diff-args from artifact frontmatter ---
+    extract_diff_args() {
+        if [[ -f "$ARTIFACT_FILE" ]]; then
+            sed -n 's/^<!-- *diff-args: *\(.*\) *-->/\1/p' "$ARTIFACT_FILE" | head -1
+        fi
+    }
+
+    # --- Helper: Extract plan-path from artifact frontmatter ---
+    extract_plan_path() {
+        if [[ -f "$ARTIFACT_FILE" ]]; then
+            sed -n 's/^<!-- *plan-path: *\(.*\) *-->/\1/p' "$ARTIFACT_FILE" | head -1
+        fi
+    }
+
+    # --- Helper: Extract spec-path from artifact frontmatter ---
+    extract_spec_path() {
+        if [[ -f "$ARTIFACT_FILE" ]]; then
+            sed -n 's/^<!-- *spec-path: *\(.*\) *-->/\1/p' "$ARTIFACT_FILE" | head -1
+        fi
+    }
+
     # --- Helper: Spawn reviewers for current artifact ---
     # Returns 0 on success (caller should proceed to polling), exits on error/resolved
     spawn_reviewers() {
@@ -1428,12 +1576,83 @@ review_gate_check() {
         detected_type=$(detect_review_type)
         log "review-gate: spawn reviewers (type=${detected_type:-none})"
 
-        if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
-           REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
-           REVIEW_GATE_SESSION_ID="$SESSION_ID" \
-           REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
-           REVIEW_TYPE="$detected_type" \
-           "$0" spawn "$ARTIFACT_FILE" >/dev/null 2>&1; then
+        local spawn_success=false
+
+        # For code-review-iterative, re-fetch the diff to capture fixes
+        if [[ "$detected_type" == "code-review-iterative" ]]; then
+            local diff_args
+            diff_args=$(extract_diff_args)
+            log "review-gate: code-review-iterative re-spawn with diff_args='$diff_args'"
+
+            if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+               REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+               REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+               REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+               "$0" spawn-code-review $diff_args >/dev/null 2>&1; then
+                spawn_success=true
+            fi
+        # For plan-review-iterative, re-read the plan file to capture edits
+        elif [[ "$detected_type" == "plan-review-iterative" ]]; then
+            local plan_path
+            plan_path=$(extract_plan_path)
+            log "review-gate: plan-review-iterative re-spawn with plan_path='$plan_path'"
+
+            if [[ -n "$plan_path" && -f "$plan_path" ]]; then
+                if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+                   REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+                   REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+                   REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+                   "$0" spawn-plan-review "$plan_path" >/dev/null 2>&1; then
+                    spawn_success=true
+                fi
+            else
+                log "review-gate: plan-review-iterative missing plan_path, falling back to artifact"
+                if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+                   REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+                   REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+                   REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+                   REVIEW_TYPE="$detected_type" \
+                   "$0" spawn "$ARTIFACT_FILE" >/dev/null 2>&1; then
+                    spawn_success=true
+                fi
+            fi
+        # For spec review, re-read the spec file to capture edits
+        elif [[ "$detected_type" == "spec" ]]; then
+            local spec_path
+            spec_path=$(extract_spec_path)
+            log "review-gate: spec re-spawn with spec_path='$spec_path'"
+
+            if [[ -n "$spec_path" && -f "$spec_path" ]]; then
+                if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+                   REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+                   REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+                   REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+                   "$0" spawn-spec-review "$spec_path" >/dev/null 2>&1; then
+                    spawn_success=true
+                fi
+            else
+                log "review-gate: spec missing spec_path, falling back to artifact"
+                if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+                   REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+                   REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+                   REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+                   REVIEW_TYPE="$detected_type" \
+                   "$0" spawn "$ARTIFACT_FILE" >/dev/null 2>&1; then
+                    spawn_success=true
+                fi
+            fi
+        else
+            if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
+               REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
+               REVIEW_GATE_SESSION_ID="$SESSION_ID" \
+               REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
+               REVIEW_TYPE="$detected_type" \
+               "$0" spawn "$ARTIFACT_FILE" >/dev/null 2>&1; then
+                spawn_success=true
+            fi
+        fi
+
+        if [[ "$spawn_success" == "true" ]]; then
             if [[ -f "$STATE_FILE" ]]; then
                 local status
                 status=$(jq -r '.status // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
@@ -2000,6 +2219,7 @@ PY
         local trigger_source="$1"
         local issues="$2"
         local mode_plan_path="$3"
+        local mode_spec_path="${4:-}"
 
         case "$trigger_source" in
             code-review-iterative)
@@ -2019,7 +2239,18 @@ Please revise **$plan_display** to address the following issues:
 
 $issues
 
-After updating the plan, the review will automatically re-run.
+After updating the plan, re-run \`review-gate spawn-plan-review\` to trigger re-review.
+INSTRUCTIONS
+                ;;
+            spec)
+                local spec_display="$mode_spec_path"
+                [[ -z "$spec_display" ]] && spec_display="the spec"
+                cat <<INSTRUCTIONS
+Please revise **$spec_display** to address the following issues:
+
+$issues
+
+After updating the spec, re-run \`review-gate spawn-spec-review $spec_display\` to trigger re-review.
 INSTRUCTIONS
                 ;;
             *)
@@ -2028,7 +2259,7 @@ Please revise the artifact to address the following issues:
 
 $issues
 
-After updating the artifact, the review will automatically re-run.
+After updating the artifact, re-run the review command to trigger re-review.
 INSTRUCTIONS
                 ;;
         esac
@@ -2116,6 +2347,9 @@ Please manually review and decide:
         # Collect issues from non-PASS reviews
         ISSUES=$(collect_issues)
 
+        # Extract mode paths BEFORE cleaning state (which deletes STATE_FILE)
+        MODE_SPEC_PATH=$(jq -r '.mode.spec_path // ""' "$STATE_FILE" 2>/dev/null || echo "")
+
         # Clean state so reviewers will be re-spawned after revision
         # (Archive uses the current iteration number, so do this before incrementing.)
         clean_for_rerun
@@ -2125,8 +2359,8 @@ Please manually review and decide:
 
         log "review-gate: revision required; incremented iteration"
 
-        # Format type-specific revision instructions
-        REVISION_INSTRUCTIONS=$(format_revision_instructions "$TRIGGER_SOURCE" "$ISSUES" "$MODE_PLAN_PATH")
+        # Format type-specific revision instructions (using extracted paths)
+        REVISION_INSTRUCTIONS=$(format_revision_instructions "$TRIGGER_SOURCE" "$ISSUES" "$MODE_PLAN_PATH" "$MODE_SPEC_PATH")
 
         REASON="$RESULTS
 
@@ -2160,6 +2394,10 @@ main() {
         spawn-plan-review)
             shift
             review_gate_spawn_plan_review "$@"
+            ;;
+        spawn-spec-review)
+            shift
+            review_gate_spawn_spec_review "$@"
             ;;
         resolve)
             shift
