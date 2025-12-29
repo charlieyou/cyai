@@ -1,32 +1,29 @@
-# Plan: Package Review Gate as a Plugin
+# Plan: Package Cerberus as a Plugin
+
+*Three-headed guardian of code quality.*
 
 ## Goal
-Package all review gate functionality into a self-contained plugin that can be easily installed by other users via a GitHub marketplace.
+Package Cerberus (multi-model consensus review system) into a self-contained plugin that can be easily installed by other users via a GitHub marketplace.
+
+## Scope
+Only `/code-review` and `/plan-review` commands. Other commands (healthcheck, architecture-review, scope, bd-*) remain in cyai repo.
 
 ## Proposed Plugin Structure
 
 ```
-review-gate/
+cerberus/
 ├── .claude-plugin/
 │   └── plugin.json              # Plugin manifest
 ├── commands/
-│   ├── code-review.md           # /review-gate:code-review
-│   ├── plan-review.md           # /review-gate:plan-review
-│   ├── scope.md                 # /review-gate:scope
-│   ├── architecture-review.md   # /review-gate:architecture-review
-│   └── healthcheck.md           # /review-gate:healthcheck
+│   ├── review-code.md           # /cerberus:review-code
+│   └── review-plan.md           # /cerberus:review-plan
 ├── prompts/
-│   ├── reviewers/
-│   │   ├── code-review.md
-│   │   ├── plan.md
-│   │   ├── spec.md
-│   │   └── architecture-review.md
-│   └── generators/
-│       ├── healthcheck.md
-│       └── architecture-review.md
+│   └── reviewers/
+│       ├── code.md              # Code diff review criteria
+│       └── plan.md              # Plan review criteria
 ├── bin/
-│   ├── review-gate              # Main script (2474 lines)
-│   └── review-gate-lib.sh       # Shared library (204 lines)
+│   ├── review-gate              # Main script
+│   └── review-gate-lib.sh       # Shared library
 ├── hooks/
 │   └── hooks.json               # Stop hook configuration
 └── README.md                    # Installation & usage docs
@@ -61,7 +58,6 @@ PROMPT_DIR="${CLAUDE_PLUGIN_ROOT}/prompts"
 ```
 
 ### 3. Create hooks.json
-Move the Stop hook configuration into the plugin:
 
 ```json
 {
@@ -85,15 +81,15 @@ Move the Stop hook configuration into the plugin:
 
 ```json
 {
-  "name": "review-gate",
+  "name": "cerberus",
   "version": "1.0.0",
-  "description": "Multi-model code review with iterative feedback loops",
+  "description": "Three-headed guardian of code quality. Multi-model consensus review with Codex, Gemini, and Claude.",
   "author": {
     "name": "cyou"
   },
-  "repository": "https://github.com/cyou/review-gate",
+  "repository": "https://github.com/cyou/cerberus",
   "license": "MIT",
-  "keywords": ["code-review", "multi-model", "quality-gate"]
+  "keywords": ["code-review", "multi-model", "quality-gate", "cerberus"]
 }
 ```
 
@@ -108,40 +104,32 @@ The script shells out to:
 
 Users need these installed. Document in README.
 
-## Files to Move
+## Files to Copy
 
 | Current Location | Plugin Location |
 |-----------------|-----------------|
 | `bin/review-gate` | `bin/review-gate` |
 | `bin/review-gate-lib.sh` | `bin/review-gate-lib.sh` |
-| `commands/code-review.md` | `commands/code-review.md` |
-| `commands/plan-review.md` | `commands/plan-review.md` |
-| `commands/scope.md` | `commands/scope.md` |
-| `commands/architecture-review.md` | `commands/architecture-review.md` |
-| `commands/healthcheck.md` | `commands/healthcheck.md` |
-| `prompts/reviewers/*.md` | `prompts/reviewers/*.md` |
-| `prompts/generators/*.md` | `prompts/generators/*.md` |
+| `commands/code-review.md` | `commands/review-code.md` |
+| `commands/plan-review.md` | `commands/review-plan.md` |
+| `prompts/reviewers/code-review.md` | `prompts/reviewers/code.md` |
+| `prompts/reviewers/plan.md` | `prompts/reviewers/plan.md` |
 
 ## Implementation Steps
 
-1. Create plugin directory structure
-2. Copy all files to plugin directory
+1. Create plugin directory structure at `plugins/cerberus/`
+2. Copy files to plugin directory
 3. Update `review-gate` script:
-   - Add `PLUGIN_ROOT` resolution at top
-   - Replace all hardcoded paths with `$PLUGIN_ROOT`
+   - Add `PLUGIN_ROOT` resolution at top (detect if running from plugin or standalone)
+   - Replace hardcoded paths with `$PLUGIN_ROOT`
+   - Strip out generate subcommand and other unused code paths
 4. Update command files:
    - Replace `~/.local/bin/review-gate` with `${CLAUDE_PLUGIN_ROOT}/bin/review-gate`
 5. Create `hooks/hooks.json` with Stop hook
 6. Create `.claude-plugin/plugin.json` manifest
 7. Create README with:
-   - Prerequisites (codex, gemini CLI tools)
+   - Prerequisites (codex, gemini, claude CLIs)
    - Installation instructions
    - Command usage
-8. Test locally with `claude --plugin-dir ./review-gate`
+8. Test locally with `claude --plugin-dir ./plugins/cerberus`
 9. Create marketplace repository for distribution
-
-## Open Questions
-
-1. **Plugin name**: `review-gate` or something more descriptive like `multi-model-review`?
-2. **Should we keep bd-* commands?** (bd-breakdown, bd-implement, bd-parallel) - these seem related but separate
-3. **Marketplace location**: Create new repo or subdirectory of existing?

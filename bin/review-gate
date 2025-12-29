@@ -385,7 +385,7 @@ review_gate_spawn_code_review() {
     # --- Parse diff mode args ---
     local diff_mode="--uncommitted"
     local diff_target=""
-    local diff_args_str=""
+    local diff_args_str="--uncommitted"  # Default matches diff_mode default
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
