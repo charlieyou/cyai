@@ -115,21 +115,44 @@ Users need these installed. Document in README.
 | `prompts/reviewers/code-review.md` | `prompts/reviewers/code.md` |
 | `prompts/reviewers/plan.md` | `prompts/reviewers/plan.md` |
 
+## Coexistence Strategy
+
+**Problem**: Non-packaged commands (`healthcheck`, `architecture-review`, `scope`) also depend on `review-gate`:
+- `scope.md` → `review-gate spawn-spec-review`
+- `architecture-review.md` → `review-gate generate --type architecture-review`
+- `healthcheck.md` → `review-gate generate --type healthcheck`
+
+**Solution**: Two parallel setups:
+
+| Setup | For | How it works |
+|-------|-----|--------------|
+| **Plugin (cerberus)** | External users | Self-contained, uses `${CLAUDE_PLUGIN_ROOT}/bin/review-gate` |
+| **Symlinks (cyai)** | Your local setup | Continues using `~/.local/bin/review-gate` via `link-all.sh` |
+
+**For your local setup**:
+- Keep `link-all.sh` symlinking all commands and `bin/review-gate`
+- Non-packaged commands continue working via symlinked `review-gate`
+- You can optionally install the cerberus plugin too (commands would be `/cerberus:review-code` vs `/code-review`)
+
+**For external users**:
+- Install cerberus plugin only
+- Get `/cerberus:review-code` and `/cerberus:review-plan`
+- Plugin provides its own Stop hook
+- No dependency on symlinks or `~/.local/bin/`
+
 ## Implementation Steps
 
-1. Create plugin directory structure at `plugins/cerberus/`
-2. Copy files to plugin directory
-3. Update `review-gate` script:
-   - Add `PLUGIN_ROOT` resolution at top (detect if running from plugin or standalone)
+1. Create plugin directory structure in worktree at `../cerberus-plugin/plugins/cerberus/`
+2. Copy and adapt files to plugin directory
+3. Update `review-gate` script for plugin:
+   - Resolve `PLUGIN_ROOT` from script location
    - Replace hardcoded paths with `$PLUGIN_ROOT`
-   - Strip out generate subcommand and other unused code paths
-4. Update command files:
-   - Replace `~/.local/bin/review-gate` with `${CLAUDE_PLUGIN_ROOT}/bin/review-gate`
+   - Keep only spawn-code-review, spawn-plan-review, check, resolve, artifact-path
+   - Remove generate subcommand (not needed for code/plan review)
+4. Create plugin commands:
+   - `review-code.md` - adapted from code-review.md
+   - `review-plan.md` - adapted from plan-review.md
 5. Create `hooks/hooks.json` with Stop hook
 6. Create `.claude-plugin/plugin.json` manifest
-7. Create README with:
-   - Prerequisites (codex, gemini, claude CLIs)
-   - Installation instructions
-   - Command usage
+7. Create README with prerequisites and usage
 8. Test locally with `claude --plugin-dir ./plugins/cerberus`
-9. Create marketplace repository for distribution

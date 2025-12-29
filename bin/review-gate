@@ -1005,9 +1005,11 @@ USAGE
         local project_root
         project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
+        # Search order: project-local, then bundled with script, then user-global fallback
         local search_paths=(
             "$project_root/prompts/reviewers/${type}.md"
             "$SCRIPT_DIR/../prompts/reviewers/${type}.md"
+            "$HOME/.claude/review-prompts/${type}.md"
         )
 
         for path in "${search_paths[@]}"; do
@@ -1628,6 +1630,8 @@ review_gate_check() {
             log "review-gate: code-review-iterative re-spawn with diff_args='$diff_args'"
 
             # Parse diff_args into array safely (no eval to avoid command injection)
+            # Note: This splits on whitespace, so args with spaces won't round-trip.
+            # In practice, git diff args (--base, --commit, ranges) don't contain spaces.
             local -a args_array
             read -r -a args_array <<< "$diff_args"
 
