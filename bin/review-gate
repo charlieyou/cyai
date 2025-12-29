@@ -1056,20 +1056,20 @@ DEFAULT
                     # Unwrap if needed (handle codex/gemini output formats)
                     review_json=$(unwrap_review_json "$review_json" 2>/dev/null || echo "$review_json")
 
-                    local verdict summary issues
+                    local verdict summary findings
                     verdict=$(echo "$review_json" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
                     summary=$(echo "$review_json" | jq -r '.summary // ""' 2>/dev/null || echo "")
-                    issues=$(echo "$review_json" | jq -r '.issues // [] | .[]' 2>/dev/null || echo "")
+                    findings=$(echo "$review_json" | jq -r '.findings // [] | .[] | "[\(.priority // "?")] \(.title // "No title")"' 2>/dev/null || echo "")
 
                     echo "**Verdict:** $verdict"
                     if [[ -n "$summary" && "$summary" != "null" ]]; then
                         echo "**Summary:** $summary"
                     fi
-                    if [[ -n "$issues" ]]; then
-                        echo "**Issues:**"
-                        while IFS= read -r issue; do
-                            echo "- $issue"
-                        done <<< "$issues"
+                    if [[ -n "$findings" ]]; then
+                        echo "**Findings:**"
+                        while IFS= read -r finding; do
+                            echo "- $finding"
+                        done <<< "$findings"
                     fi
                 else
                     echo "(Could not parse review output)"
@@ -1116,11 +1116,16 @@ PROMPT
 ## Output Format
 JSON only, no markdown code fences:
 {
+  "findings": [
+    {"title": "[P1] Issue title", "body": "Why this is a problem", "priority": 1}
+  ],
   "verdict": "PASS" | "FAIL" | "NEEDS_WORK",
-  "confidence": 0.0-1.0,
-  "issues": ["..."],
   "summary": "1-2 sentences"
 }
+
+- PASS: No significant findings
+- FAIL: Blocking issues (P0/P1)
+- NEEDS_WORK: Non-blocking issues (P2/P3)
 PROMPT
     }
 
@@ -1250,15 +1255,6 @@ PROMPT
       "type": "string",
       "enum": ["PASS", "FAIL", "NEEDS_WORK"]
     },
-    "confidence": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1
-    },
-    "issues": {
-      "type": "array",
-      "items": {"type": "string"}
-    },
     "summary": {
       "type": "string"
     },
@@ -1269,26 +1265,16 @@ PROMPT
         "properties": {
           "title": {"type": "string"},
           "body": {"type": "string"},
-          "confidence_score": {"type": "number"},
-          "priority": {"type": "integer"},
-          "code_location": {
-            "type": "object",
-            "properties": {
-              "file_path": {"type": "string"},
-              "line_range": {
-                "type": "object",
-                "properties": {
-                  "start": {"type": "integer"},
-                  "end": {"type": "integer"}
-                }
-              }
-            }
-          }
-        }
+          "priority": {"type": "integer", "minimum": 0, "maximum": 3},
+          "file_path": {"type": "string"},
+          "line_start": {"type": "integer"},
+          "line_end": {"type": "integer"}
+        },
+        "required": ["title", "body", "priority"]
       }
     }
   },
-  "required": ["verdict", "confidence", "issues", "summary"],
+  "required": ["verdict", "summary", "findings"],
   "additionalProperties": false
 }
 SCHEMA
@@ -2206,23 +2192,23 @@ PY
                     verdict="UNCLEAR"
                 fi
 
-                # Only collect issues from non-PASS reviews
+                # Only collect findings from non-PASS reviews
                 if [[ "$verdict" != "PASS" ]]; then
-                    local issues
-                    issues=$(echo "$result" | jq -r '.issues // [] | .[]' 2>/dev/null || echo "")
+                    local findings
+                    findings=$(echo "$result" | jq -r '.findings // [] | .[] | "[P\(.priority // "?")] \(.title // "No title"): \(.body // "")"' 2>/dev/null || echo "")
                     local summary
                     summary=$(echo "$result" | jq -r '.summary // ""' 2>/dev/null || echo "")
 
-                    if [[ -n "$issues" || -n "$summary" ]]; then
+                    if [[ -n "$findings" || -n "$summary" ]]; then
                         all_issues+="### $reviewer ($verdict)\n"
                         if [[ -n "$summary" ]]; then
                             all_issues+="Summary: $summary\n"
                         fi
-                        if [[ -n "$issues" ]]; then
-                            all_issues+="Issues:\n"
-                            while IFS= read -r issue; do
-                                all_issues+="- $issue\n"
-                            done <<< "$issues"
+                        if [[ -n "$findings" ]]; then
+                            all_issues+="Findings:\n"
+                            while IFS= read -r finding; do
+                                all_issues+="- $finding\n"
+                            done <<< "$findings"
                         fi
                         all_issues+="\n"
                     fi

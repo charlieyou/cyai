@@ -53,23 +53,18 @@ JSON only, no markdown code fences:
 {
   "findings": [
     {
-      "title": "<= 80 chars, imperative, with priority tag e.g. [P1] Fix null check>",
-      "body": "<valid Markdown explaining why this is a problem; cite files/lines/functions>",
-      "confidence_score": <float 0.0-1.0>,
-      "priority": <int 0-3>,
-      "code_location": {
-        "file_path": "<file path>",
-        "line_range": {"start": <int>, "end": <int>}
-      }
+      "title": "[P1] <= 80 chars, imperative",
+      "body": "Markdown explaining why this is a problem",
+      "priority": 1,
+      "file_path": "path/to/file.py",
+      "line_start": 42,
+      "line_end": 45
     }
   ],
   "verdict": "PASS" | "FAIL" | "NEEDS_WORK",
-  "confidence": <float 0.0-1.0>,
-  "issues": ["<summary of each finding for backward compatibility>"],
-  "summary": "<1-3 sentence explanation justifying the verdict>"
+  "summary": "1-3 sentence explanation"
 }
 
-Notes:
-- verdict should be "PASS" if no significant findings, "FAIL" for blocking issues (P0/P1), "NEEDS_WORK" for non-blocking issues (P2/P3).
-- The code_location should reference lines from the diff.
-- issues array should contain brief summaries matching the findings for backward compatibility.
+- PASS: No significant findings
+- FAIL: Blocking issues (P0/P1)
+- NEEDS_WORK: Non-blocking issues (P2/P3)
