@@ -525,10 +525,17 @@ ARTIFACT
     # --- Export diff args for re-spawn on iteration ---
     export REVIEW_GATE_DIFF_ARGS="$diff_args_str"
 
+    # --- Write the prompt file directly (bypass build_prompt to use our template) ---
+    local reviews_dir="$review_dir/reviews"
+    mkdir -p "$reviews_dir"
+    local prompt_file="$reviews_dir/review.prompt"
+    echo "$prompt_content" > "$prompt_file"
+
     # --- Spawn reviewers using existing infrastructure ---
     REVIEW_GATE_SESSION_ID="$session_id" \
     REVIEW_GATE_TRANSCRIPT_PATH="$transcript_path" \
     REVIEW_TYPE="code-review-iterative" \
+    REVIEW_GATE_PROMPT_FILE="$prompt_file" \
     "$0" spawn "$artifact_path"
 }
 
@@ -1226,7 +1233,12 @@ PROMPT
     fi
 
     local prompt_file="$REVIEWS_DIR/review.prompt"
-    build_prompt "$artifact_path" "$REVIEW_TYPE" > "$prompt_file"
+    if [[ -n "${REVIEW_GATE_PROMPT_FILE:-}" && -f "$REVIEW_GATE_PROMPT_FILE" ]]; then
+        # Use pre-built prompt file (e.g., from spawn-code-review)
+        cp "$REVIEW_GATE_PROMPT_FILE" "$prompt_file"
+    else
+        build_prompt "$artifact_path" "$REVIEW_TYPE" > "$prompt_file"
+    fi
 
     # Create JSON schema for structured output
     local schema_file="$REVIEWS_DIR/review-schema.json"
@@ -1249,6 +1261,31 @@ PROMPT
     },
     "summary": {
       "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "body": {"type": "string"},
+          "confidence_score": {"type": "number"},
+          "priority": {"type": "integer"},
+          "code_location": {
+            "type": "object",
+            "properties": {
+              "file_path": {"type": "string"},
+              "line_range": {
+                "type": "object",
+                "properties": {
+                  "start": {"type": "integer"},
+                  "end": {"type": "integer"}
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "required": ["verdict", "confidence", "issues", "summary"],
