@@ -160,6 +160,11 @@ After writing the initial spec, spawn the review gate to get feedback from exter
 ~/.local/bin/review-gate spawn-spec-review [spec-path]
 ```
 
+**CRITICAL: After spawning the reviewers, you MUST stop immediately.** Do not wait, poll, sleep, or check status. Just stop. The stop hook will automatically:
+1. Wait for all reviewers to complete
+2. Present findings if any reviewer found issues
+3. Block your stop until you fix the spec and reviews pass
+
 The review gate will:
 1. Send the spec to multiple AI reviewers in parallel
 2. Each reviewer evaluates for completeness, correctness, ordering, edge cases, and breaking changes
