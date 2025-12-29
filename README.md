@@ -250,15 +250,15 @@ The review gate system uses these scripts in `~/.local/bin/`:
 
 The review gate uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved from `prompts/reviewers/<type>.md`.
 
-**Built-in templates:**
+**Built-in templates** (in `prompts/reviewers/`):
 
 | Type | Template | Used By |
 |------|----------|---------|
 | `healthcheck` | Checks coverage, accuracy, actionability, proportionality | `/healthcheck` |
 | `architecture-review` | Checks insight quality, leverage, feasibility, trade-offs | `/architecture-review` |
 | `code-review` | Checks correctness, security, completeness, false positives | `/code-review` |
-| `plan` | Checks completeness, order of operations, edge cases, scope | Implementation plans |
-| `spec` | Checks clarity, scope, feasibility, actionability | Feature specs |
+| `plan` | Checks completeness, order of operations, edge cases, scope | `/plan-review`, implementation plans |
+| `spec` | Checks clarity, scope, feasibility, actionability | `/scope`, feature specs |
 
 **Type detection:**
 
@@ -315,8 +315,9 @@ Then reference it via frontmatter (`<!-- review-type: my-custom-type -->`) or ex
 | `code-review` | Multi-model code review for git changes (`--uncommitted`, `--base`, `--commit`, ranges) |
 | `diary` | Create a structured diary entry from the current session |
 | `healthcheck` | Code health review optimized for AI-generated codebases |
+| `plan-review` | Iterative plan review with external reviewers (Codex, Gemini, Claude) |
 | `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
-| `review-gate` | Multi-model consensus review with user approval gate |
+| `scope` | Interview user to transform a vague feature idea into a detailed spec |
 
 ## Agents
 
