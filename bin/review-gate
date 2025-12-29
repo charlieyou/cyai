@@ -995,6 +995,13 @@ USAGE
     # --- Resolve review template ---
     resolve_template() {
         local type="$1"
+
+        # Map iterative review types to their base template names
+        case "$type" in
+            code-review-iterative) type="code-review" ;;
+            plan-review-iterative) type="plan" ;;
+        esac
+
         local project_root
         project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
@@ -1620,12 +1627,15 @@ review_gate_check() {
             diff_args=$(extract_diff_args)
             log "review-gate: code-review-iterative re-spawn with diff_args='$diff_args'"
 
-            # Use eval to properly handle quoted arguments in diff_args
+            # Parse diff_args into array safely (no eval to avoid command injection)
+            local -a args_array
+            read -r -a args_array <<< "$diff_args"
+
             if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
                REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
                REVIEW_GATE_SESSION_ID="$SESSION_ID" \
                REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
-               eval "\"$0\" spawn-code-review $diff_args" >/dev/null 2>&1; then
+               "$0" spawn-code-review "${args_array[@]}" >/dev/null 2>&1; then
                 spawn_success=true
             fi
         # For plan-review-iterative, re-read the plan file to capture edits
