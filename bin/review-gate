@@ -1086,7 +1086,7 @@ DEFAULT
                     local verdict summary findings
                     verdict=$(echo "$review_json" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
                     summary=$(echo "$review_json" | jq -r '.summary // ""' 2>/dev/null || echo "")
-                    findings=$(echo "$review_json" | jq -r '.findings // [] | .[] | "\(.title // "No title")"' 2>/dev/null || echo "")
+                    findings=$(echo "$review_json" | jq -r '.findings // [] | .[] | .title // "No title"' 2>/dev/null || echo "")
 
                     echo "**Verdict:** $verdict"
                     if [[ -n "$summary" && "$summary" != "null" ]]; then
@@ -2237,7 +2237,7 @@ PY
                 # Only collect findings from non-PASS reviews
                 if [[ "$verdict" != "PASS" ]]; then
                     local findings
-                    findings=$(echo "$result" | jq -r '.findings // [] | .[] | "\(.title // "No title"): \(.body // "")"' 2>/dev/null || echo "")
+                    findings=$(echo "$result" | jq -r '.findings // [] | .[] | (.title // "No title") + ": " + (.body // "")' 2>/dev/null || echo "")
                     local summary
                     summary=$(echo "$result" | jq -r '.summary // ""' 2>/dev/null || echo "")
 

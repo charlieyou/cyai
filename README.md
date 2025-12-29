@@ -61,13 +61,15 @@ Architecture exploration and layer checks for Python projects:
 - `arch-grimp-layers` - layer violation check (CI-friendly)
 - `arch-grimp-diff` - compare current violations to a baseline
 
-## Review Gate
+## Cerberus
 
-Multi-model consensus review system that gates Claude Code session termination until artifacts are reviewed and approved. Operates in **autonomous mode** with automatic revision loops.
+*Three-headed guardian of code quality.*
+
+Multi-model consensus review system that gates Claude Code session termination until artifacts are reviewed and approved. Like its mythological namesake, Cerberus uses three AI heads (Codex, Gemini, Claude) to guard the gates—nothing leaves until all three agree. Operates in **autonomous mode** with automatic revision loops.
 
 ### Purpose
 
-When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), the review gate:
+When you generate review artifacts (via `/healthcheck`, `/architecture-review`, etc.), Cerberus:
 1. Spawns three AI reviewers (Codex, Gemini, Claude) to analyze the artifact in parallel
 2. Blocks session termination until all reviewers complete
 3. **Automatically loops** until all reviewers agree (PASS)
@@ -176,7 +178,7 @@ After adding the configuration:
 
 1. Start a new Claude Code session
 2. Run `/healthcheck` to generate a review artifact
-3. Verify the review gate triggers when Claude stops
+3. Verify Cerberus triggers when Claude stops
 4. Confirm the autonomous revision loop works (blocks if not all PASS, auto-approves if all PASS)
 
 ### Timeout and Polling
@@ -190,9 +192,9 @@ The check script polls for reviewer completion with configurable behavior:
 
 The 60-second hook timeout is sufficient for most cases. If reviewers haven't completed, the hook blocks and re-fires on the next stop attempt.
 
-### Adding Review Gate to a Command
+### Adding Cerberus to a Command
 
-To make a command automatically trigger the review gate, add this section at the end of your command's markdown file:
+To make a command automatically trigger Cerberus, add this section at the end of your command's markdown file:
 
 ```markdown
 ---
@@ -211,7 +213,7 @@ Then use the Write tool to save this entire review output to that path (use the 
 Write the complete review above to <paste the path printed above>
 \`\`\`
 
-This enables automatic review gate validation if configured.
+This enables automatic Cerberus validation if configured.
 ```
 
 When Claude finishes executing the command and tries to stop, the Stop hook will:
@@ -240,7 +242,7 @@ Commands like `/healthcheck` use multi-model generation: Codex, Gemini, and Clau
 
 ### Scripts
 
-The review gate system uses these scripts in `~/.local/bin/`:
+Cerberus uses these scripts in `~/.local/bin/`:
 
 | Script | Purpose |
 |--------|---------|
@@ -248,7 +250,7 @@ The review gate system uses these scripts in `~/.local/bin/`:
 
 ### Type-Specific Review Prompts
 
-The review gate uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved from `prompts/reviewers/<type>.md`.
+Cerberus uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved from `prompts/reviewers/<type>.md`.
 
 **Built-in templates** (in `prompts/reviewers/`):
 
