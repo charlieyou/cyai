@@ -6,6 +6,26 @@ Perform a **principal-engineer-level** architecture review focused on **high-lev
 
 This is not a correctness bug hunt. Only flag correctness issues if they block architectural change or reveal systemic design flaws.
 
+## Guidelines for Flagging Issues
+
+1. The issue meaningfully impacts maintainability, scalability, or correctness.
+2. The issue is discrete and actionable (not a general concern about "architecture").
+3. The issue targets structural problems, not code style.
+4. To claim a boundary violation, you must identify both sides of the boundary.
+5. The fix should provide leverage - improving multiple areas, not just one.
+6. Avoid speculative concerns - identify concrete structural problems.
+7. Only cite issues you can point to in code you actually inspected.
+
+## Comment Guidelines
+
+1. Be clear about why the structural issue matters.
+2. Communicate severity appropriately - don't overstate.
+3. Keep descriptions brief (1 paragraph max per issue).
+4. Reference specific modules, files, and dependency paths.
+5. Suggest concrete refactoring approaches.
+6. Acknowledge trade-offs (e.g., "This adds complexity but improves X").
+7. Maintain a matter-of-fact, helpful tone.
+
 ## Traversal Strategy
 
 1. **Map boundaries** (quick pass): entry points, public APIs, services, and core domains
@@ -44,7 +64,14 @@ Stop traversal once you have enough evidence to populate the top 6-12 issues.
 - Heavy constructors or framework setup required just to test logic
 - Tight coupling that makes unit tests impossible without integration scaffolding
 
-## Priority Order
+## Priority Levels
+
+- [P0] - Critical. Architecture causes production risk or data integrity issues (use sparingly).
+- [P1] - Urgent. Architectural debt blocking feature velocity or safe changes.
+- [P2] - Normal. Design friction that slows changes but is not blocking.
+- [P3] - Low. Improvement opportunity with limited ROI.
+
+## Priority Order for Analysis
 
 When in doubt, prioritize:
 1. **Boundary clarity & dependency direction** - modules should have crisp responsibilities and one-way dependencies
@@ -63,38 +90,6 @@ When in doubt, prioritize:
 
 Use OO only when it clearly improves ergonomics (e.g., polymorphism with real behavior variance).
 
-## Output Format
-
-Produce a structured architecture review with:
-
-1. **Method** block (3-6 bullets): tools run, entry points reviewed, key files scanned, assumptions/unknowns
-
-2. **Issues** sorted by severity (Critical -> High -> Medium -> Low), each with:
-   - **Severity** and short title
-   - **Primary files**: paths with approximate line numbers
-   - **Category**: Boundaries | Testability | Complexity | Duplication | Cohesion | Abstraction
-   - **Type**: bug | task | chore
-   - **Confidence**: High | Medium | Low
-   - **Context**: What's wrong, why it matters (1-3 sentences)
-   - **Fix**: Concrete action to resolve (1-3 sentences)
-   - **Acceptance Criteria**: 1-3 bullets
-   - **Test Plan**: 1-2 bullets
-
-## Severity Definitions
-
-- **Critical**: Architecture causes production risk or data integrity issues (use sparingly)
-- **High**: Architectural debt that blocks feature velocity or safe changes
-- **Medium**: Design friction that slows changes but is not blocking
-- **Low**: Improvement opportunity with limited ROI
-
-## Ground Rules
-
-- **Be evidence-based**: only cite issues you can point to in code that was actually inspected
-- **Avoid speculation**: if unsure, mark "Needs verification" and lower confidence
-- **Be specific**: tie every point to concrete files, modules, or functions (no generic advice)
-- **Keep it incremental**: propose refactors that can land in steps; avoid "rewrite it all"
-- **Keep excerpts tiny**: reference files and symbols; avoid long code blocks
-
 ## Out of Scope (Do Not Report)
 
 - Style/formatting issues (leave to linters)
@@ -105,6 +100,20 @@ Produce a structured architecture review with:
 - Performance micro-optimizations without measured impact
 - Dead code, ghost features, or AI-specific API misuse (covered by healthcheck)
 - Hygiene cleanup (debug logs, stale TODOs, build artifacts)
+
+## Output Format
+
+Produce a structured architecture review with:
+
+1. **Method** block (3-6 bullets): tools run, entry points reviewed, key files scanned, assumptions/unknowns
+
+2. **Issues** sorted by priority [P0-P3], each with:
+   - **Priority tag and title** (e.g., "[P1] Circular dependency between auth and users")
+   - **Primary files**: paths with approximate line numbers
+   - **Category**: Boundaries | Testability | Complexity | Duplication | Cohesion | Abstraction
+   - **Context**: What's wrong, why it matters (1 paragraph max)
+   - **Fix**: Concrete action to resolve (1-3 sentences)
+   - **Acceptance Criteria**: 1-3 bullets
 
 ## CRITICAL RULES
 

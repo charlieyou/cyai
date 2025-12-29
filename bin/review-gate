@@ -486,39 +486,21 @@ USAGE
     mkdir -p "$review_dir"
 
     # --- Build prompt with diff ---
+    local prompt_template_path="$SCRIPT_DIR/../prompts/reviewers/code-review.md"
     local prompt_content
-    prompt_content=$(cat <<PROMPT
-# Code Review
-
-You are reviewing code changes for correctness, security, and error handling.
-
-## Diff to Review
-
-\`\`\`diff
-$diff_content
-\`\`\`
-
-## Evaluation Criteria
-
-1. **Correctness** - Does the code do what it intends? Logic errors?
-2. **Security** - Injection, auth bypass, data exposure, secrets in code?
-3. **Error Handling** - Failures handled gracefully? Edge cases covered?
-4. **Performance** - Obvious inefficiencies?
-5. **Breaking Changes** - API changes that could break consumers?
-
-Focus on substantive issues. Ignore style nitpicks.
-
-## Output Format
-
-JSON only, no markdown code fences:
-{
-  "verdict": "PASS" | "FAIL" | "NEEDS_WORK",
-  "confidence": 0.0-1.0,
-  "issues": ["description of issue 1", "description of issue 2"],
-  "summary": "1-2 sentences"
-}
-PROMPT
-    )
+    if [[ -f "$prompt_template_path" ]]; then
+        # Load template and substitute ${DIFF_CONTENT} using awk for multi-line safety
+        prompt_content=$(DIFF_CONTENT="$diff_content" awk '{
+            while (match($0, /\$\{DIFF_CONTENT\}/)) {
+                printf "%s", substr($0, 1, RSTART-1)
+                printf "%s", ENVIRON["DIFF_CONTENT"]
+                $0 = substr($0, RSTART+RLENGTH)
+            }
+            print
+        }' "$prompt_template_path")
+    else
+        die "Code review prompt template not found: $prompt_template_path"
+    fi
 
     # --- Write artifact for review gate ---
     local artifact_path="$review_dir/latest.md"
@@ -2227,6 +2209,8 @@ PY
 Please revise the **code** to address the following issues:
 
 $issues
+
+**Important:** Create a NEW commit with your fixes. Do NOT use \`git commit --amend\` as this changes the commit SHA and breaks the review tracking.
 
 After fixing the code, the review will automatically re-run.
 INSTRUCTIONS
