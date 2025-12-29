@@ -248,11 +248,7 @@ The review gate system uses these scripts in `~/.local/bin/`:
 
 ### Type-Specific Review Prompts
 
-The review gate uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved in order:
-
-1. `$PROJECT_ROOT/.claude/review-prompts/<type>.md` (project-local)
-2. `~/.claude/review-prompts/<type>.md` (user-global)
-3. Fallback to generic criteria
+The review gate uses type-specific evaluation criteria based on the artifact being reviewed. Templates are resolved from `prompts/reviewers/<type>.md`.
 
 **Built-in templates:**
 
@@ -262,6 +258,7 @@ The review gate uses type-specific evaluation criteria based on the artifact bei
 | `architecture-review` | Checks insight quality, leverage, feasibility, trade-offs | `/architecture-review` |
 | `code-review` | Checks correctness, security, completeness, false positives | `/code-review` |
 | `plan` | Checks completeness, order of operations, edge cases, scope | Implementation plans |
+| `spec` | Checks clarity, scope, feasibility, actionability | Feature specs |
 
 **Type detection:**
 
@@ -271,17 +268,27 @@ The review gate uses type-specific evaluation criteria based on the artifact bei
 
 **Creating custom templates:**
 
-Create a markdown file in `.claude/review-prompts/<type>.md`:
+Create a markdown file in `prompts/reviewers/<type>.md` following the Codex-style guidelines:
 
 ```markdown
-## Evaluation Criteria (My Custom Type)
+## <Type> Review Guidelines
 
-Review this artifact for:
+You are acting as a reviewer for <what you're reviewing>.
+
+### What to Evaluate
 1. **Criterion 1** - Description
 2. **Criterion 2** - Description
+
+### Guidelines for Flagging Issues
+1. The issue meaningfully impacts <quality dimension>.
+2. The issue is discrete and actionable.
 ...
 
-Focus on <what makes a good artifact of this type>.
+### Priority Levels
+- [P0] - Critical/blocking
+- [P1] - Urgent
+- [P2] - Normal
+- [P3] - Low
 ```
 
 Then reference it via frontmatter (`<!-- review-type: my-custom-type -->`) or explicit `--type=my-custom-type`.

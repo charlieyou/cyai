@@ -972,8 +972,8 @@ USAGE
         project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
         local search_paths=(
-            "$project_root/.claude/review-prompts/${type}.md"
-            "$HOME/.claude/review-prompts/${type}.md"
+            "$SCRIPT_DIR/../prompts/reviewers/${type}.md"
+            "$project_root/prompts/reviewers/${type}.md"
         )
 
         for path in "${search_paths[@]}"; do
