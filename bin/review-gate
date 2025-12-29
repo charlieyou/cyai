@@ -486,39 +486,55 @@ USAGE
     mkdir -p "$review_dir"
 
     # --- Build prompt with diff ---
-    local prompt_template_path="$SCRIPT_DIR/../prompts/reviewers/code-review.md"
+    # Resolve template with project-local override support
+    local project_root
+    project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    local prompt_template_path=""
+    for path in "$project_root/prompts/reviewers/code-review.md" "$SCRIPT_DIR/../prompts/reviewers/code-review.md"; do
+        if [[ -f "$path" ]]; then
+            prompt_template_path="$path"
+            break
+        fi
+    done
+
     local prompt_content
-    if [[ -f "$prompt_template_path" ]]; then
-        # Load template and substitute ${DIFF_CONTENT} using awk for multi-line safety
-        prompt_content=$(DIFF_CONTENT="$diff_content" awk '{
-            while (match($0, /\$\{DIFF_CONTENT\}/)) {
-                printf "%s", substr($0, 1, RSTART-1)
-                printf "%s", ENVIRON["DIFF_CONTENT"]
-                $0 = substr($0, RSTART+RLENGTH)
+    if [[ -n "$prompt_template_path" && -f "$prompt_template_path" ]]; then
+        # Load template and substitute ${DIFF_CONTENT} using temp file to avoid ARG_MAX limits
+        local diff_tmp="${review_dir}/diff_content.tmp"
+        printf '%s' "$diff_content" > "$diff_tmp"
+        prompt_content=$(awk -v diff_file="$diff_tmp" '
+            BEGIN { while ((getline line < diff_file) > 0) diff = diff (diff ? "\n" : "") line; close(diff_file) }
+            {
+                while (match($0, /\$\{DIFF_CONTENT\}/)) {
+                    printf "%s", substr($0, 1, RSTART-1)
+                    printf "%s", diff
+                    $0 = substr($0, RSTART+RLENGTH)
+                }
+                print
             }
-            print
-        }' "$prompt_template_path")
+        ' "$prompt_template_path")
+        rm -f "$diff_tmp"
     else
-        die "Code review prompt template not found: $prompt_template_path"
+        die "Code review prompt template not found in project or built-in locations"
     fi
 
     # --- Write artifact for review gate ---
     local artifact_path="$review_dir/latest.md"
-    cat > "$artifact_path" <<ARTIFACT
-<!-- review-type: code-review-iterative -->
-<!-- diff-args: $diff_args_str -->
-
-# Code Review (Iterative)
-
-## Diff Mode
-$diff_mode ${diff_target:-}
-
-## Changes
-
-\`\`\`diff
-$diff_content
-\`\`\`
-ARTIFACT
+    {
+        echo "<!-- review-type: code-review-iterative -->"
+        echo "<!-- diff-args: $diff_args_str -->"
+        echo ""
+        echo "# Code Review (Iterative)"
+        echo ""
+        echo "## Diff Mode"
+        echo "$diff_mode ${diff_target:-}"
+        echo ""
+        echo "## Changes"
+        echo ""
+        echo '```diff'
+        printf '%s\n' "$diff_content"
+        echo '```'
+    } > "$artifact_path"
 
     echo "Artifact written: $artifact_path" >&2
 
@@ -630,21 +646,21 @@ USAGE
 
     # --- Write artifact for review gate ---
     local artifact_path="$review_dir/latest.md"
-    cat > "$artifact_path" <<ARTIFACT
-<!-- review-type: plan-review-iterative -->
-<!-- plan-path: $plan_path -->
-
-# Plan Review (Iterative)
-
-## Plan Path
-$plan_path
-
-## Plan Content
-
-\`\`\`markdown
-$plan_content
-\`\`\`
-ARTIFACT
+    {
+        echo "<!-- review-type: plan-review-iterative -->"
+        echo "<!-- plan-path: $plan_path -->"
+        echo ""
+        echo "# Plan Review (Iterative)"
+        echo ""
+        echo "## Plan Path"
+        echo "$plan_path"
+        echo ""
+        echo "## Plan Content"
+        echo ""
+        echo '```markdown'
+        cat "$plan_path"
+        echo '```'
+    } > "$artifact_path"
 
     echo "Artifact written: $artifact_path" >&2
 
@@ -665,6 +681,8 @@ ARTIFACT
     fi
 
     echo "Plan review spawned for: $plan_path" >&2
+    echo "" >&2
+    echo "STOP now. The stop hook will wait for reviewers and present findings." >&2
 }
 
 review_gate_spawn_spec_review() {
@@ -751,21 +769,21 @@ USAGE
 
     # --- Write artifact for review gate ---
     local artifact_path="$review_dir/latest.md"
-    cat > "$artifact_path" <<ARTIFACT
-<!-- review-type: spec -->
-<!-- spec-path: $spec_path -->
-
-# Spec Review (Iterative)
-
-## Spec Path
-$spec_path
-
-## Spec Content
-
-<spec-content>
-$spec_content
-</spec-content>
-ARTIFACT
+    {
+        echo "<!-- review-type: spec -->"
+        echo "<!-- spec-path: $spec_path -->"
+        echo ""
+        echo "# Spec Review (Iterative)"
+        echo ""
+        echo "## Spec Path"
+        echo "$spec_path"
+        echo ""
+        echo "## Spec Content"
+        echo ""
+        echo "<spec-content>"
+        cat "$spec_path"
+        echo "</spec-content>"
+    } > "$artifact_path"
 
     echo "Artifact written: $artifact_path" >&2
 
@@ -786,6 +804,8 @@ ARTIFACT
     fi
 
     echo "Spec review spawned for: $spec_path" >&2
+    echo "" >&2
+    echo "STOP now. The stop hook will wait for reviewers and present findings." >&2
 }
 
 review_gate_artifact_path() {
@@ -979,8 +999,8 @@ USAGE
         project_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
         local search_paths=(
-            "$SCRIPT_DIR/../prompts/reviewers/${type}.md"
             "$project_root/prompts/reviewers/${type}.md"
+            "$SCRIPT_DIR/../prompts/reviewers/${type}.md"
         )
 
         for path in "${search_paths[@]}"; do
@@ -1059,7 +1079,7 @@ DEFAULT
                     local verdict summary findings
                     verdict=$(echo "$review_json" | jq -r '.verdict // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
                     summary=$(echo "$review_json" | jq -r '.summary // ""' 2>/dev/null || echo "")
-                    findings=$(echo "$review_json" | jq -r '.findings // [] | .[] | "[\(.priority // "?")] \(.title // "No title")"' 2>/dev/null || echo "")
+                    findings=$(echo "$review_json" | jq -r '.findings // [] | .[] | "\(.title // "No title")"' 2>/dev/null || echo "")
 
                     echo "**Verdict:** $verdict"
                     if [[ -n "$summary" && "$summary" != "null" ]]; then
@@ -1117,7 +1137,7 @@ PROMPT
 JSON only, no markdown code fences:
 {
   "findings": [
-    {"title": "[P1] Issue title", "body": "Why this is a problem", "priority": 1}
+    {"title": "[P1] Issue title", "body": "Why this is a problem", "priority": 1, "file_path": null, "line_start": null, "line_end": null}
   ],
   "verdict": "PASS" | "FAIL" | "NEEDS_WORK",
   "summary": "1-2 sentences"
@@ -1126,6 +1146,7 @@ JSON only, no markdown code fences:
 - PASS: No significant findings
 - FAIL: Blocking issues (P0/P1)
 - NEEDS_WORK: Non-blocking issues (P2/P3)
+- file_path, line_start, line_end are optional (use null if not applicable)
 PROMPT
     }
 
@@ -1223,6 +1244,13 @@ PROMPT
     artifact_path=$(resolve_artifact "$artifact_arg")
 
     check_existing_gate
+
+    # Read prebuilt prompt content BEFORE clean_state deletes it
+    local prebuilt_prompt_content=""
+    if [[ -n "${REVIEW_GATE_PROMPT_FILE:-}" && -f "$REVIEW_GATE_PROMPT_FILE" ]]; then
+        prebuilt_prompt_content=$(cat "$REVIEW_GATE_PROMPT_FILE")
+    fi
+
     clean_state
 
     local artifact_sha256
@@ -1238,9 +1266,9 @@ PROMPT
     fi
 
     local prompt_file="$REVIEWS_DIR/review.prompt"
-    if [[ -n "${REVIEW_GATE_PROMPT_FILE:-}" && -f "$REVIEW_GATE_PROMPT_FILE" ]]; then
-        # Use pre-built prompt file (e.g., from spawn-code-review)
-        cp "$REVIEW_GATE_PROMPT_FILE" "$prompt_file"
+    if [[ -n "$prebuilt_prompt_content" ]]; then
+        # Use pre-built prompt content (read before clean_state)
+        echo "$prebuilt_prompt_content" > "$prompt_file"
     else
         build_prompt "$artifact_path" "$REVIEW_TYPE" > "$prompt_file"
     fi
@@ -1381,6 +1409,8 @@ SCHEMA
 
     echo "Review gate spawned: $spawned reviewers for $artifact_path" >&2
     echo "State file: $STATE_FILE" >&2
+    echo "" >&2
+    echo "STOP now. The stop hook will wait for reviewers and present findings." >&2
 }
 
 review_gate_resolve() {
@@ -1590,11 +1620,12 @@ review_gate_check() {
             diff_args=$(extract_diff_args)
             log "review-gate: code-review-iterative re-spawn with diff_args='$diff_args'"
 
+            # Use eval to properly handle quoted arguments in diff_args
             if REVIEW_GATE_SESSION_KEY="$SESSION_KEY" \
                REVIEW_GATE_SESSION_SOURCE="$SESSION_SOURCE" \
                REVIEW_GATE_SESSION_ID="$SESSION_ID" \
                REVIEW_GATE_TRANSCRIPT_PATH="$TRANSCRIPT_PATH" \
-               "$0" spawn-code-review $diff_args >/dev/null 2>&1; then
+               eval "\"$0\" spawn-code-review $diff_args" >/dev/null 2>&1; then
                 spawn_success=true
             fi
         # For plan-review-iterative, re-read the plan file to capture edits
@@ -2196,7 +2227,7 @@ PY
                 # Only collect findings from non-PASS reviews
                 if [[ "$verdict" != "PASS" ]]; then
                     local findings
-                    findings=$(echo "$result" | jq -r '.findings // [] | .[] | "[P\(.priority // "?")] \(.title // "No title"): \(.body // "")"' 2>/dev/null || echo "")
+                    findings=$(echo "$result" | jq -r '.findings // [] | .[] | "\(.title // "No title"): \(.body // "")"' 2>/dev/null || echo "")
                     local summary
                     summary=$(echo "$result" | jq -r '.summary // ""' 2>/dev/null || echo "")
 
@@ -2236,7 +2267,7 @@ $issues
 
 **Important:** Create a NEW commit with your fixes. Do NOT use \`git commit --amend\` as this changes the commit SHA and breaks the review tracking.
 
-After fixing the code, the review will automatically re-run.
+**After fixing the code, STOP immediately.** The stop hook will automatically re-run the review.
 INSTRUCTIONS
                 ;;
             plan-review-iterative)
@@ -2247,7 +2278,7 @@ Please revise **$plan_display** to address the following issues:
 
 $issues
 
-After updating the plan, re-run \`review-gate spawn-plan-review\` to trigger re-review.
+**After updating the plan, STOP immediately.** The stop hook will spawn the next review round.
 INSTRUCTIONS
                 ;;
             spec)
@@ -2258,7 +2289,7 @@ Please revise **$spec_display** to address the following issues:
 
 $issues
 
-After updating the spec, re-run \`review-gate spawn-spec-review $spec_display\` to trigger re-review.
+**After updating the spec, STOP immediately.** The stop hook will spawn the next review round.
 INSTRUCTIONS
                 ;;
             *)
@@ -2267,7 +2298,7 @@ Please revise the artifact to address the following issues:
 
 $issues
 
-After updating the artifact, re-run the review command to trigger re-review.
+**After updating the artifact, STOP immediately.** The stop hook will spawn the next review round.
 INSTRUCTIONS
                 ;;
         esac

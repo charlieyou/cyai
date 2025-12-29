@@ -33,11 +33,6 @@ Use the Bash tool to spawn the code review:
 ~/.local/bin/review-gate spawn-code-review $ARGUMENTS
 ```
 
-**CRITICAL: After spawning the reviewers, you MUST stop immediately.** Do not wait, poll, sleep, or check status. Just stop. The stop hook will automatically:
-1. Wait for all reviewers to complete
-2. Present findings if any reviewer found issues
-3. Block your stop until you fix the code and reviews pass
-
 ## Review Criteria
 
 Reviewers evaluate for:

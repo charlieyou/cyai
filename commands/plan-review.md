@@ -17,11 +17,6 @@ review-gate spawn-plan-review $ARGUMENTS
 
 If no path is provided, the most recent plan from `~/.claude/plans/` will be used.
 
-**CRITICAL: After spawning the reviewers, you MUST stop immediately.** Do not wait, poll, sleep, or check status. Just stop. The stop hook will automatically:
-1. Wait for all reviewers to complete
-2. Present findings if any reviewer found issues
-3. Block your stop until you fix the plan and reviews pass
-
 ## How It Works
 
 1. External reviewers (Codex, Gemini) evaluate the plan for:
