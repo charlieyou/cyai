@@ -7,6 +7,15 @@ description: Explore Python import graphs and enforce layered architecture using
 
 Use this skill when the user wants to explore Python module boundaries, investigate dependency flow, or enforce layered architecture with grimp.
 
+## Setup
+
+Create the venv and install grimp (requires Python 3.12):
+
+```bash
+uv venv ~/.claude/skills/grimp-architecture/.venv --python 3.12
+uv pip install grimp --python ~/.claude/skills/grimp-architecture/.venv/bin/python
+```
+
 ## Quick Start
 
 Scripts are in `~/.claude/skills/grimp-architecture/scripts/` with a pre-configured venv:
@@ -73,5 +82,6 @@ PYTHONPATH=src $GRIMP_PY $GRIMP_SCRIPTS/explore.py mypackage
 
 ## Notes
 
+- **Python 3.12 is required** - grimp has compatibility issues with Python 3.14+.
 - The skill venv at `~/.claude/skills/grimp-architecture/.venv` has grimp pre-installed.
 - For advanced grimp features (closed layers, non-independent siblings, containers), use a custom Python snippet.
