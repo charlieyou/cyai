@@ -84,7 +84,7 @@ Use the AskUserQuestion tool to conduct the interview. Ask questions that:
 
 When the interview is complete, write a comprehensive spec to a file.
 
-**File location**: Ask the user where to save, or default to `specs/FEATURE_NAME.md`
+**File location**: Ask the user where to save, or default to `docs/YYYY-MM-DD-FEATURE_NAME-spec.md` (using current date)
 
 **Spec Structure**:
 
