@@ -129,9 +129,11 @@ bd update <id> --description "<reshaped description preserving existing content>
 
 **Preserve existing content** - reshape and enrich the current description into standard sections, don't overwrite. Append new context rather than replacing.
 
-**Do not invent missing context** - always use `AskUserQuestion` if you don't have enough information to fill a section properly.
+**Do not invent missing context** - always use `AskUserQuestion` if you don't have enough information to fill a section properly. When in doubt, ASK.
 
 **Batch questions** - prefer grouping missing sections for an issue into a single `AskUserQuestion` call with multiple questions.
+
+**Ask liberally** - it's better to ask too many questions than to guess. Every missing or vague section should trigger a question unless Explore provides a clear answer.
 
 ### Acceptance Criteria Quality (Anti-Gameable)
 
@@ -194,6 +196,8 @@ bd update <id> -p <new-priority>
 
 ## Phase 4: Identify Dependencies
 
+**CRITICAL: Only add dependencies FROM open issues, never TO blocked issues.** Blocked issues already have dependencies — adding more to them creates unnecessary chains.
+
 **CRITICAL: If two issues touch the same file, they CANNOT run in parallel.**
 
 ### Build File → Issues Mapping
@@ -221,14 +225,17 @@ For issues sharing files or logical coupling:
 
 ### Add Missing Dependencies
 
+**Skip blocked issues as the "blocked" side** — only add dependencies where the blocked issue is currently `open`.
+
 ```bash
 bd dep list <id>  # Check existing
 
 # Add dependency (blocker blocks blocked-issue)
+# Only do this if blocked-issue has status=open
 bd dep add <blocked-issue-id> <blocker-issue-id>
 ```
 
-**When in doubt, add the dependency.** Too many = slower but correct. Too few = merge conflicts.
+**When in doubt, add the dependency** (for open issues). Too many = slower but correct. Too few = merge conflicts.
 
 ## Phase 5: Protocol Completeness
 
