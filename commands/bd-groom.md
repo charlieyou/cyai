@@ -43,6 +43,8 @@ For each issue, check if another non-closed issue covers the same scope:
 
 ## Phase 3: Improve Descriptions, Type, and Labels
 
+**CRITICAL: Process EVERY issue from the list. Do not skip any open issues.**
+
 **Skip issues with status `blocked`** — they're waiting on dependencies and will be groomed when unblocked.
 
 For each non-blocked issue, run `bd show <id>` and evaluate:
