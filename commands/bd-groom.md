@@ -1,6 +1,6 @@
 ---
 description: Groom beads issues - improve descriptions/labels and identify dependencies
-argument-hint: [<issue-id>...]
+argument-hint: [open|blocked]
 ---
 
 # Beads Issue Grooming
@@ -9,41 +9,43 @@ You are grooming existing bd (beads) issues to improve their quality and ensure 
 
 **Arguments:** $ARGUMENTS
 
-If no arguments provided, groom all open/in_progress/blocked issues. If issue IDs provided, groom only those.
+- `open` — groom only open issues
+- `blocked` — groom only blocked issues
+- No argument — groom all open/blocked issues
 
 Use the **beads skill** for this task. **Execute all `bd` commands directly** — do not just print them.
 
 ## Phase 1: Load Issues
 
-If specific issue IDs were provided in arguments, load only those:
 ```bash
-bd show <id1>
-bd show <id2>
-# ... for each provided ID
-```
+# If argument is "open":
+bd list --status open
 
-Otherwise, load all open/in_progress/blocked issues:
-```bash
-bd list --status open --status in_progress --status blocked
+# If argument is "blocked":
+bd list --status blocked
+
+# If no argument:
+bd list --status open --status blocked
 ```
 
 ## Phase 2: De-duplication Check
 
-Before improving issues, scan for duplicates:
+Before improving issues, scan for duplicates among non-closed issues only:
 
 ```bash
-bd search "<keywords from issue title>"
-bd list --status open --status in_progress --status blocked
+bd search "<keywords from issue title>" --status open --status blocked
 ```
 
-For each issue, check if another issue covers the same scope:
+For each issue, check if another non-closed issue covers the same scope:
 - If **true duplicate**: Close one with `bd close <id> --reason "Duplicate of <other-id>"` and update survivor's description with "Related/merged from <closed-id>"
 - If **partial overlap**: Note in description that they're related, ensure dependency exists
 - If **no overlap**: Continue to grooming
 
 ## Phase 3: Improve Descriptions, Type, and Labels
 
-For each issue, run `bd show <id>` and evaluate:
+**Skip issues with status `blocked`** — they're waiting on dependencies and will be groomed when unblocked.
+
+For each non-blocked issue, run `bd show <id>` and evaluate:
 
 ### Type Validation
 
