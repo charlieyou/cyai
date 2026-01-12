@@ -63,6 +63,9 @@ DEFAULT_ENABLED=()
 | `mala-logs` | Search and analyze mala orchestrator and Claude session logs |
 | `pyspark-style` | PySpark code style and best practices for DataFrame API |
 
+### From Others
+Front-end Design skill from: https://www.justinwetch.com/blog/improvingclaudefrontend
+
 ## Commands
 
 | Command | Description |
