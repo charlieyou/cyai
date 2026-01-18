@@ -142,10 +142,14 @@ def cmd_explore(args: argparse.Namespace) -> int:
         _setup_pythonpath(pkg)
 
     grimp = _require_grimp()
-    graph = grimp.build_graph(
-        *args.package,
-        include_external_packages=args.include_external,
-    )
+    try:
+        graph = grimp.build_graph(
+            *args.package,
+            include_external_packages=args.include_external,
+        )
+    except (ValueError, ImportError, ModuleNotFoundError, SyntaxError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     packages = args.package
     internal_modules = [m for m in graph.modules if _is_internal(m, packages)]
@@ -200,10 +204,14 @@ def cmd_path(args: argparse.Namespace) -> int:
         _setup_pythonpath(pkg)
 
     grimp = _require_grimp()
-    graph = grimp.build_graph(
-        *packages,
-        include_external_packages=args.include_external,
-    )
+    try:
+        graph = grimp.build_graph(
+            *packages,
+            include_external_packages=args.include_external,
+        )
+    except (ValueError, ImportError, ModuleNotFoundError, SyntaxError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     chain = graph.find_shortest_chain(
         importer=args.importer,
@@ -232,10 +240,14 @@ def cmd_layers(args: argparse.Namespace) -> int:
         print("At least two layers are required.", file=sys.stderr)
         return 2
 
-    graph = grimp.build_graph(
-        *packages,
-        include_external_packages=args.include_external,
-    )
+    try:
+        graph = grimp.build_graph(
+            *packages,
+            include_external_packages=args.include_external,
+        )
+    except (ValueError, ImportError, ModuleNotFoundError, SyntaxError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     containers = set(args.container) if args.container else None
     illegal = graph.find_illegal_dependencies_for_layers(
@@ -280,10 +292,14 @@ def cmd_diff(args: argparse.Namespace) -> int:
         print("At least two layers are required.", file=sys.stderr)
         return 2
 
-    graph = grimp.build_graph(
-        *packages,
-        include_external_packages=args.include_external,
-    )
+    try:
+        graph = grimp.build_graph(
+            *packages,
+            include_external_packages=args.include_external,
+        )
+    except (ValueError, ImportError, ModuleNotFoundError, SyntaxError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     containers = set(args.container) if args.container else None
     illegal = graph.find_illegal_dependencies_for_layers(

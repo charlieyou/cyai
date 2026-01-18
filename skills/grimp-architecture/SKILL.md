@@ -20,7 +20,7 @@ uv pip install grimp --python ~/.agents/skills/grimp-architecture/.venv/bin/pyth
 
 ```bash
 # Shorthand
-GRIMP=~/.agents/skills/grimp-architecture/.venv/bin/python\ ~/.agents/skills/grimp-architecture/scripts/grimp.py
+GRIMP=~/.agents/skills/grimp-architecture/.venv/bin/python\ ~/.agents/skills/grimp-architecture/scripts/grimp_cli.py
 ```
 
 1. **Explore the graph** (fan-in/out, top-level structure):
