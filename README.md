@@ -51,6 +51,14 @@ DEFAULT_ENABLED=()
 - With toggle flags → uses `--strict-mcp-config` (only specified servers, ignores settings.json)
 - No config file → wrapper passes through to real claude (toggle flags ignored)
 
+## Amp Plugins
+
+| Plugin | Description |
+|--------|-------------|
+| `safety-net` | Prompts for confirmation before dangerous shell commands (rm -rf, git reset --hard, etc.) |
+
+Plugins are symlinked to `~/.config/amp/plugins/` by `link-all.sh`. Run Amp with `PLUGINS=all amp` to enable.
+
 ## Skills
 
 | Skill | Description |
