@@ -13,43 +13,8 @@ Run the linking script to symlink components to the appropriate directories:
 This creates symlinks in:
 - `~/.claude/skills/` for skills
 - `~/.claude/commands/` for commands
-- `~/.local/bin/` for wrapper scripts
 
 The script is idempotent and can be run multiple times safely.
-
-## Bin Scripts
-
-### `claude` wrapper
-
-A wrapper around the claude CLI that adds MCP server toggle flags:
-
-```bash
-claude              # Normal (uses settings.json)
-claude +mail        # Enable mail MCP server
-claude +mail +foo   # Enable multiple servers
-clauded +mail       # Composable with --dangerously-skip-permissions
-```
-
-**Setup:**
-
-Create `~/.claude/mcp-servers.sh` with your server definitions (not committed):
-
-```bash
-# MCP Server definitions - DO NOT COMMIT (contains secrets)
-
-declare -A SERVERS=(
-  ["mail"]='{"type":"http","url":"http://127.0.0.1:8765/mcp/","headers":{"Authorization":"Bearer YOUR_TOKEN"}}'
-  ["github"]='{"command":"gh-mcp"}'
-)
-
-# Servers enabled by default (empty = none)
-DEFAULT_ENABLED=()
-```
-
-**Behavior:**
-- No toggle flags → runs real claude with settings.json (normal behavior)
-- With toggle flags → uses `--strict-mcp-config` (only specified servers, ignores settings.json)
-- No config file → wrapper passes through to real claude (toggle flags ignored)
 
 ## Amp Plugins
 

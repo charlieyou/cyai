@@ -13,8 +13,20 @@ CLAUDE_COMMANDS="$HOME/.claude/commands"
 CODEX_PROMPTS="$HOME/.codex/prompts"
 CLAUDE_AGENTS="$HOME/.claude/agents"
 AMP_PLUGINS="$HOME/.config/amp/plugins"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+STATUSLINE_SCRIPT="$SCRIPT_DIR/.claude/statusline.sh"
 
 mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$AMP_PLUGINS"
+
+# Statusline is configured in settings.json instead of symlinked into ~/.claude.
+if [[ -L "$HOME/.claude/statusline.sh" ]]; then
+    if [[ "$(readlink "$HOME/.claude/statusline.sh")" == "$STATUSLINE_SCRIPT" ]]; then
+        rm "$HOME/.claude/statusline.sh"
+        echo "Removed statusline symlink"
+    else
+        echo "Warning: $HOME/.claude/statusline.sh is a symlink to another location, leaving it unchanged"
+    fi
+fi
 
 # Clean up stale symlinks (broken symlinks in managed directories)
 cleaned=()
@@ -164,6 +176,7 @@ claude_files=()
 for config_file in "$SCRIPT_DIR"/.claude/*; do
     [[ ! -f "$config_file" ]] && continue
     config_name="$(basename "$config_file")"
+    [[ "$config_name" == "statusline.sh" ]] && continue
 
     target="$HOME/.claude/$config_name"
     if [[ -L "$target" ]]; then
@@ -181,6 +194,31 @@ for config_file in "$SCRIPT_DIR"/.claude/*; do
     chmod +x "$config_file" 2>/dev/null || true
     claude_files+=("$config_name")
 done
+
+if [[ -f "$STATUSLINE_SCRIPT" ]]; then
+    chmod +x "$STATUSLINE_SCRIPT" 2>/dev/null || true
+    python3 - "$CLAUDE_SETTINGS" "$STATUSLINE_SCRIPT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+settings_path = Path(sys.argv[1])
+statusline_command = sys.argv[2]
+
+if settings_path.exists() and settings_path.read_text().strip():
+    settings = json.loads(settings_path.read_text())
+else:
+    settings = {}
+
+settings["statusLine"] = {
+    "type": "command",
+    "command": statusline_command,
+}
+
+settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+PY
+    echo "Configured Claude statusLine command: $STATUSLINE_SCRIPT"
+fi
 
 # Link review prompts as user-global fallback
 review_prompts_source="$SCRIPT_DIR/prompts/reviewers"
