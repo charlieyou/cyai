@@ -8,6 +8,21 @@ input=$(cat)
 # Extract information from JSON
 model_name=$(echo "$input" | jq -r '.model.display_name')
 current_dir=$(echo "$input" | jq -r '.workspace.current_dir')
+effort_level=$(echo "$input" | jq -r '.effort.level // empty')
+thinking_enabled=$(echo "$input" | jq -r 'if .thinking.enabled == null then empty else .thinking.enabled end')
+
+case "$effort_level" in
+    low|medium|high|xhigh|max)
+        if [ "$thinking_enabled" != "false" ]; then
+            thinking_info="$effort_level"
+        else
+            thinking_info="off"
+        fi
+        ;;
+    *)
+        thinking_info="off"
+        ;;
+esac
 
 # Extract context window information
 # total_context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
@@ -28,8 +43,35 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 GRAY='\033[0;90m'
 NC='\033[0m' # No Color
+
+case "$thinking_info" in
+    off)
+        thinking_color="$GRAY"
+        ;;
+    low)
+        thinking_color="$GREEN"
+        ;;
+    medium)
+        thinking_color="$CYAN"
+        ;;
+    high)
+        thinking_color="$YELLOW"
+        ;;
+    xhigh)
+        thinking_color="$RED"
+        ;;
+    max)
+        thinking_color="$MAGENTA"
+        ;;
+    *)
+        thinking_color="$GRAY"
+        ;;
+esac
+
+thinking_segment=" ${GRAY}|${NC} ${thinking_color}${thinking_info}${NC}"
 
 # Change to the current directory to get git info
 cd "$current_dir" 2>/dev/null || cd /
@@ -80,4 +122,4 @@ max_k=$((context_max / 1000))
 context_info="${GRAY}${bar}${NC} ${context_percent}% (${used_k}k/${max_k}k)"
 
 # Output the status line
-echo -e "${BLUE}${dir_name}${NC} ${GRAY}|${NC} ${CYAN}${model_name}${NC} ${GRAY}|${NC} ${context_info}${git_info:+ ${GRAY}|${NC}}${git_info}"
+echo -e "${BLUE}${dir_name}${NC} ${GRAY}|${NC} ${CYAN}${model_name}${NC}${thinking_segment} ${GRAY}|${NC} ${context_info}${git_info:+ ${GRAY}|${NC}}${git_info}"
