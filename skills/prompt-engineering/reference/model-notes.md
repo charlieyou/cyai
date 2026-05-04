@@ -13,8 +13,37 @@ These are general observations that may change as models evolve. Test with your 
 
 - Use message roles effectively (system, user, assistant)
 - Supports structured outputs (JSON mode) for consistent formatting
-- Benefits from explicit, detailed instructions with full logic
-- Reasoning models (o1, etc.): give high-level goals, less micromanagement
+- Older GPT-style prompts sometimes benefited from explicit, detailed instructions with full logic; newer reasoning and agentic models generally perform better with concise outcome-focused instructions
+- Reasoning models (o1, GPT-5.5, etc.): give high-level goals and success criteria, less micromanagement
+
+### GPT-5.5
+
+GPT-5.5 works best with prompts that read like concise engineering tickets:
+
+```markdown
+Outcome.
+What good means.
+Constraints.
+How to verify.
+Final answer expectations.
+```
+
+Guidance:
+- Start with the smallest prompt that preserves the product contract.
+- Avoid spelling out generic process such as "first inspect, then plan, then edit, then test" unless that exact process matters.
+- Put repo rules in `AGENTS.md` or guidance files.
+- Put tool behavior in tool descriptions.
+- Treat skills and guidance files as constraints and shortcuts, not invitations to expand the task.
+- Scale verification to risk and blast radius:
+  - Read-only or explanation tasks usually need no verification.
+  - Small localized edits need focused checks.
+  - Shared or cross-module changes may need broader tests.
+
+Reasoning levels:
+- `low`: narrow, cheap-to-verify tasks.
+- `medium`: default for normal deep work.
+- `xhigh`: hard, ambiguous, or high-impact tasks where maximum quality matters more than cost and latency.
+- Do not treat `high` as the safe default or normal escalation path; use `medium` by default and `xhigh` when quality justifies the cost.
 
 ## Gemini (Google)
 
@@ -24,9 +53,9 @@ These are general observations that may change as models evolve. Test with your 
 
 ## General Cross-Model Patterns
 
-These tend to work across all major models:
-- Clear role/identity statements
-- Explicit output format specifications
-- Few-shot examples for complex tasks
+These tend to work across major models when they reduce ambiguity:
+- Role/identity statements, when they materially change behavior
+- Explicit output format, when format matters
+- Few-shot examples for complex, subjective, format-sensitive, or repeatedly failing tasks
 - Structured sections with headers
 - Success criteria in the prompt

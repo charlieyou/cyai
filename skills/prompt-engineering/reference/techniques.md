@@ -1,14 +1,43 @@
 # Advanced Prompt Techniques
 
+## Outcome-Focused Prompting
+
+For GPT-5.5 and other strong reasoning or agentic models, default to a compact product contract:
+
+```markdown
+Outcome:
+What good means:
+Constraints:
+How to verify:
+Final response:
+```
+
+Use detailed process instructions only when:
+- The exact process is required by the product
+- The model has repeatedly failed without them
+- Compliance, auditability, or handoff requires visible intermediate artifacts
+
+Otherwise, avoid generic scaffolding such as:
+- "First inspect, then plan, then edit, then test"
+- "Think step by step"
+- "Always produce a detailed plan before answering"
+
+Avoid response-ceremony scaffolding unless it is part of the product contract. Do not add detailed rules for progress updates, heading usage, prose-vs-bullets, or final-answer choreography when a concise final-response expectation is enough.
+
 ## Structured Reasoning
 
-Instead of "think step by step" (which can be unreliable), ask for:
-- **Short rationale**: "Explain your reasoning in 2-4 bullets before answering"
-- **Intermediate artifacts**: "First list the key requirements, then provide your solution"
-- **Decision criteria**: "State what factors you're considering"
+Do not ask for hidden chain-of-thought. Add visible reasoning artifacts only when they help the user evaluate the answer, support handoff, or fix an observed failure.
+
+When useful, prefer:
+- **Short rationale**: "Explain the decision in 2-4 bullets."
+- **Decision criteria**: "State the factors you considered."
+- **Assumptions**: "List any assumptions that materially affect the answer."
+
+Avoid generic requirements like "think step by step" or "show your full reasoning."
 
 ## Few-Shot Examples
 
+- Examples are optional. Use them when behavior is ambiguous, format-sensitive, subjective, or repeatedly failing. Do not add examples merely to satisfy a template.
 - Show diverse input/output pairs demonstrating desired behavior
 - Examples convey patterns better than descriptions
 - Ensure examples align with behaviors you want (avoid contradictions)
@@ -23,15 +52,16 @@ If the answer is not explicitly stated, respond: "Information not available in t
 Do not use external knowledge.
 ```
 
-## Self-Verification
+## Verification Guidance
 
-Ask the model to check its work:
-```
-After generating your response, verify:
-- Does this answer the user's actual intent?
-- Is the output consistent with all constraints?
-- Are there factual claims that need citation?
-```
+Verification should scale to risk and blast radius.
+
+- Read-only explanation: no verification needed.
+- Simple rewrite or copy edit: quick self-check is enough.
+- Local code/config change: run or recommend focused checks.
+- Shared, cross-module, or high-risk change: use broader tests.
+
+Avoid prompting for broad verification when the agent harness or repo guidance already handles it.
 
 ## Prefilling (Claude-specific)
 
@@ -79,3 +109,5 @@ If the request is ambiguous:
 2. Ask one clarifying question
 3. Do not guess or make assumptions about [critical field]
 ```
+
+Ask a clarifying question only when the missing information would materially change the output. Otherwise, state a reasonable assumption and proceed.

@@ -10,7 +10,7 @@ description: >
 
 # Prompt Engineering
 
-Improve LLM prompts through structured analysis and rewriting.
+Improve LLM prompts through outcome-focused analysis and rewriting.
 
 ## When to Use
 
@@ -25,42 +25,73 @@ Improve LLM prompts through structured analysis and rewriting.
 - Request involves policy circumvention
 - User needs model comparison or selection advice
 
-## Required Inputs (Ask If Missing)
+## Inputs to Gather
 
-Before proceeding, **use tools to gather**:
-1. **Goal**: What should the prompt accomplish?
-2. **Current prompt** (if improving existing) — read the file
-3. **Failure examples**: What went wrong? (ask user or read logs)
-4. **Constraints**: Length, format, tone, tools available
-5. **Target audience**: Who will use this prompt?
+Use the context already provided first. Gather only what is needed to preserve the product contract.
 
-Do NOT generate a revised prompt until you have gathered this information.
+Helpful inputs:
+1. **Goal/outcome**: What should the prompt accomplish?
+2. **Current prompt** (if improving existing) — read the file when the prompt lives in the workspace
+3. **Failure examples**: What went wrong? (ask user or read logs when diagnosing failures)
+4. **Constraints**: Length, format, tone, tools, sources, safety boundaries
+5. **Target audience/user**: Who will use this prompt?
 
-## Workflow
+Do not over-read or expand the task. Use tools only when the missing artifact is necessary, such as a prompt file or failure transcript. If information is missing but not blocking, proceed with stated assumptions. Ask a clarifying question only when ambiguity would materially change the revised prompt.
 
-### Step 1: Extract Requirements
-- Identify the task type (classification, generation, analysis, agentic)
-- List explicit constraints (format, length, tone)
-- Note implicit requirements from context
+## Workflow Checklist
 
-### Step 2: Identify Failure Modes
-Check for these common issues:
-- Vague objective ("help with", "optimize")
-- Missing output format specification
-- No examples for ambiguous cases
-- Important instructions buried in the middle
-- Assumes context the model doesn't have
+Use only the parts needed for the request.
 
-### Step 3: Draft Revised Prompt
-Structure with clear sections:
+- Extract the product contract:
+  - Outcome
+  - What good means
+  - Constraints and boundaries
+  - How to verify, scaled to risk
+  - Required final response shape
+- Diagnose prompt failures:
+  - Vague or conflicting objective ("help with", "optimize")
+  - Missing context or source boundaries
+  - Missing or excessive output format
+  - Important constraints buried in the middle
+  - Unnecessary process scaffolding
+  - Over-reading or task expansion
+  - Verification that is too weak or too broad
+- Draft the smallest prompt that preserves the contract.
+  - Avoid spelling out generic process such as "first inspect, then plan, then edit, then test" unless that process is required.
+  - Put stable repo rules in `AGENTS.md` or guidance files when possible.
+  - Put tool behavior in tool descriptions, not the task prompt.
+  - Include examples only when they reduce ambiguity or demonstrate hard edge cases.
+- Summarize what changed and why in diff-style or bullets.
+
+## Default Prompt Shape
+
+For strong reasoning or agentic models, prefer a compact engineering-ticket shape:
+
+```markdown
+## Outcome
+[What the model should accomplish]
+
+## What good means
+[Observable success criteria]
+
+## Constraints
+[Hard limits: sources, tone, format, tools, safety, scope]
+
+## Verification
+[Task-specific checks, scaled to risk; omit if read-only or already covered by harness/repo guidance]
+
+## Final response
+[What the model should return]
+```
+
+Add role, detailed guidelines, examples, or a step-by-step process only when they preserve the contract or fix an observed failure:
 
 ```markdown
 ## Role
-[Specific identity and responsibilities]
+[Specific identity and responsibilities, if it materially changes behavior]
 
 ## Guidelines
 - [Explicit instruction with success criteria]
-- [Format requirements]
 - [Constraints and boundaries]
 
 ## Examples
@@ -73,34 +104,33 @@ Output: [desired result]
 [The actual request with output format]
 ```
 
-### Step 4: Add Success Criteria
-Include in the prompt:
-- What good output looks like
-- How to handle uncertainty ("If unclear, ask for...")
-- Validation steps if applicable
-
-### Step 5: Add Test Cases
-Provide 2-4 scenarios:
-- Normal case (should work perfectly)
-- Edge case (incomplete input)
-- Out-of-scope (should refuse gracefully)
-
-### Step 6: Summarize Changes
-Show what was changed and why in diff-style or bullet points.
-
 ## Success Criteria for Rewritten Prompts
 
-The revised prompt MUST include:
-- [ ] Clear role/identity statement
-- [ ] Specific task description (no vague verbs)
-- [ ] Output format/schema specification
-- [ ] At least one example (for non-trivial tasks)
-- [ ] Handling for ambiguous/missing inputs
-- [ ] Constraints and boundaries
+The revised prompt should include:
+- [ ] Clear outcome or task description (no vague verbs)
+- [ ] Definition of good output or success
+- [ ] Relevant constraints and boundaries
+- [ ] Expected final response shape
+- [ ] Ambiguity handling when missing information would change the answer
+- [ ] Verification guidance scaled to risk, if the task requires verification
+
+Include only when useful:
+- [ ] Role/identity statement, if it materially changes behavior
+- [ ] Exact output schema, if the output is consumed programmatically or format drift is a known failure
+- [ ] Few-shot examples, for non-trivial, ambiguous, subjective, or repeatedly failing behavior
+- [ ] Step-by-step process, only when the process is part of the product contract
+
+## Test Cases
+
+Scale test cases to risk:
+- Read-only explanation or advice: no verification required unless the user asks for it.
+- Low-risk prompt rewrite or copy edit: quick self-check against success criteria is enough.
+- Normal prompt revision: provide or run 1 normal case and 1 edge case when useful.
+- High-risk or production prompt: include normal, edge, adversarial, and out-of-scope cases.
 
 ## Reference Files
 
 For detailed guidance, see:
-- `reference/techniques.md` - Advanced techniques (CoT, prefilling, grounding)
+- `reference/techniques.md` - Advanced techniques (outcome-focused prompting, reasoning artifacts, grounding)
 - `reference/model-notes.md` - Model-specific considerations
 - `reference/failure-modes.md` - Common problems and solutions
