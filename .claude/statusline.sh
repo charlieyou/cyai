@@ -34,8 +34,73 @@ else
     context_used=0
 fi
 
-# Get directory name (replace home directory with ~)
-dir_name=$(echo "$current_dir" | sed "s|^$HOME|~|")
+# Get directory name (replace home directory with ~, abbreviate parent dirs)
+shorten_parent_dir() {
+    local segment="$1"
+
+    if [[ "$segment" == .* && ${#segment} -gt 1 ]]; then
+        printf '.%s' "${segment:1:1}"
+    else
+        printf '%s' "${segment:0:1}"
+    fi
+}
+
+shorten_dir_path() {
+    local path="$1"
+
+    if [[ "$path" == "$HOME" ]]; then
+        printf '~\n'
+        return
+    fi
+
+    if [[ "$path" == "$HOME"/* ]]; then
+        path="~/${path#$HOME/}"
+    fi
+
+    if [[ "$path" == "/" ]]; then
+        printf '/\n'
+        return
+    fi
+
+    local prefix=""
+    local rest="$path"
+    if [[ "$rest" == ~/* ]]; then
+        prefix="~"
+        rest="${rest#~/}"
+    elif [[ "$rest" == /* ]]; then
+        prefix="/"
+        rest="${rest#/}"
+    fi
+
+    IFS='/' read -ra parts <<< "$rest"
+    local last_index=$((${#parts[@]} - 1))
+    local shortened="$prefix"
+    local segment
+    local piece
+
+    for i in "${!parts[@]}"; do
+        segment="${parts[$i]}"
+        [ -z "$segment" ] && continue
+
+        if [ "$i" -eq "$last_index" ]; then
+            piece="$segment"
+        else
+            piece=$(shorten_parent_dir "$segment")
+        fi
+
+        if [ "$shortened" = "/" ]; then
+            shortened="/$piece"
+        elif [ -n "$shortened" ]; then
+            shortened="$shortened/$piece"
+        else
+            shortened="$piece"
+        fi
+    done
+
+    printf '%s\n' "$shortened"
+}
+
+dir_name=$(shorten_dir_path "$current_dir")
 
 # Colors
 RED='\033[0;31m'
