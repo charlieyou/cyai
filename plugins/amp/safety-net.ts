@@ -356,6 +356,71 @@ function hasDangerousPath(args: string[]): boolean {
 	})
 }
 
+function isTmpPath(arg: string): boolean {
+	if (/[`$]/.test(arg)) return false
+	if (!arg.startsWith('/')) return false
+
+	const normalized = normalizeAbsolutePath(arg)
+	return normalized === '/tmp' || normalized.startsWith('/tmp/')
+}
+
+function normalizeAbsolutePath(arg: string): string {
+	const parts: string[] = []
+	for (const part of arg.split('/')) {
+		if (!part || part === '.') continue
+		if (part === '..') {
+			parts.pop()
+			continue
+		}
+		parts.push(part)
+	}
+	return '/' + parts.join('/')
+}
+
+function isStandaloneRedirection(arg: string): boolean {
+	return /^(?:\d*)?(?:>>?|<|<<|<<<|<>|>&|<&|>\||&>|&>>)$/.test(arg)
+}
+
+function isAttachedRedirection(arg: string): boolean {
+	return /^(?:\d*)?(?:>>?|<|<<|<<<|<>|>&|<&|>\||&>|&>>).+/.test(arg)
+}
+
+function rmLiteralTargets(args: string[]): string[] {
+	const targets: string[] = []
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]
+
+		if (arg === '--') continue
+		if (isStandaloneRedirection(arg)) {
+			i++
+			continue
+		}
+		if (isAttachedRedirection(arg)) continue
+		if (arg.startsWith('-')) continue
+
+		targets.push(arg)
+	}
+
+	return targets
+}
+
+function recursiveRmTargetsOutsideTmp(args: string[]): boolean {
+	if (!hasFlag(args, '-r', '-R') && !args.includes('--recursive')) return false
+
+	const targets = rmLiteralTargets(args)
+	return targets.length === 0 || targets.some((arg) => !isTmpPath(arg))
+}
+
+function recursiveRmOutsideTmp(cmdString: string): boolean {
+	return splitTopLevelCommands(stripComments(cmdString)).some((segment) => {
+		const tokens = tokenize(segment)
+		return tokens.some((token, index) =>
+			basename(token) === 'rm' && recursiveRmTargetsOutsideTmp(tokens.slice(index + 1))
+		)
+	})
+}
+
 /** For git, skip global options to find the real subcommand */
 function gitSubcommandAndArgs(args: string[]): { subcommand: string; subArgs: string[] } | null {
 	let i = 0
@@ -463,7 +528,7 @@ const DANGEROUS_PATTERNS: DangerousPattern[] = [
 	{
 		command: 'rm',
 		reason: 'Recursive file deletion.',
-		check: (args) => hasFlag(args, '-r', '-R') || args.includes('--recursive'),
+		check: recursiveRmTargetsOutsideTmp,
 	},
 	{
 		command: 'find',
@@ -507,8 +572,8 @@ function checkDangerous(cmdString: string): string | null {
 	// Conservative fallback: if the command contains shell syntax we can't parse reliably,
 	// check if it also contains dangerous-looking keywords — if so, prompt
 	if (UNSUPPORTED_SYNTAX.test(cmdString)) {
-		const dangerousKeywords = /\brm\s+-[^\s]*r|\brm\s+--recursive|\bgit\s+reset\s+--hard|\bgit\s+clean\s+-[^\s]*f|\bgit\s+push\s+--force|\bgit\s+checkout\s+--\s|\bdd\s|\bmkfs/
-		if (dangerousKeywords.test(cmdString)) {
+		const dangerousKeywords = /\bgit\s+reset\s+--hard|\bgit\s+clean\s+-[^\s]*f|\bgit\s+push\s+--force|\bgit\s+checkout\s+--\s|\bdd\s|\bmkfs/
+		if (dangerousKeywords.test(cmdString) || recursiveRmOutsideTmp(cmdString)) {
 			return `⚠️ Complex shell command contains potentially dangerous operations.\n\nCommand: ${cmdString}`
 		}
 	}

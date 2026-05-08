@@ -236,8 +236,16 @@ fi
 
 # Link Amp plugins
 amp_plugins=()
+for declaration_link in "$AMP_PLUGINS"/*.d.ts; do
+    [[ ! -L "$declaration_link" ]] && continue
+    if [[ "$(readlink "$declaration_link")" == "$SCRIPT_DIR"/* ]]; then
+        rm "$declaration_link"
+    fi
+done
+
 for plugin_file in "$SCRIPT_DIR"/plugins/amp/*.ts; do
     [[ ! -f "$plugin_file" ]] && continue
+    [[ "$plugin_file" == *.d.ts ]] && continue
     plugin_name="$(basename "$plugin_file")"
 
     target="$AMP_PLUGINS/$plugin_name"
