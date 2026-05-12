@@ -14,11 +14,11 @@ These are general observations that may change as models evolve. Test with your 
 - Use message roles effectively (system, user, assistant)
 - Supports structured outputs (JSON mode) for consistent formatting
 - Older GPT-style prompts sometimes benefited from explicit, detailed instructions with full logic; newer reasoning and agentic models generally perform better with concise outcome-focused instructions
-- Reasoning models (o1, GPT-5.5, etc.): give high-level goals and success criteria, less micromanagement
+- Reasoning models (o1, GPT-5.5, etc.): give high-level goals, success criteria, constraints, and verification expectations with less micromanagement
 
 ### GPT-5.5
 
-GPT-5.5 works best with prompts that read like concise engineering tickets:
+GPT-5.5 is strongly agentic and works best with prompts that read like concise engineering tickets. Give it a concrete target and a way to verify success, then let it choose the path unless the path is the product:
 
 ```markdown
 Outcome.
@@ -30,10 +30,13 @@ Final answer expectations.
 
 Guidance:
 - Start with the smallest prompt that preserves the product contract.
+- Prefer outcome-focused prompting over process-focused prompting.
 - Avoid spelling out generic process such as "first inspect, then plan, then edit, then test" unless that exact process matters.
 - Put repo rules in `AGENTS.md` or guidance files.
 - Put tool behavior in tool descriptions.
 - Treat skills and guidance files as constraints and shortcuts, not invitations to expand the task.
+- Keep agent communication rules short; for example, commentary updates only when something changes the user's understanding, and final answers as concise reports.
+- Use `text.verbosity` to control final-answer length when available instead of repeating detailed length choreography in prompts.
 - Scale verification to risk and blast radius:
   - Read-only or explanation tasks usually need no verification.
   - Small localized edits need focused checks.
@@ -44,6 +47,10 @@ Reasoning levels:
 - `medium`: default for normal deep work.
 - `xhigh`: hard, ambiguous, or high-impact tasks where maximum quality matters more than cost and latency.
 - Do not treat `high` as the safe default or normal escalation path; use `medium` by default and `xhigh` when quality justifies the cost.
+
+Operational notes:
+- Do not configure in-memory prompt caching for GPT-5.5; use extended prompt caching where appropriate.
+- GPT-5.5 supports very large contexts, but large prompts can still increase cost and increase the chance of task expansion. Prefer compact prompts plus scoped context.
 
 ## Gemini (Google)
 

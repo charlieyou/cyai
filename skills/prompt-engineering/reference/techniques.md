@@ -12,6 +12,8 @@ How to verify:
 Final response:
 ```
 
+This is closer to an engineering ticket than a script. Name the target, success criteria, hard constraints, and verification signal; avoid prescribing the route unless the route itself matters.
+
 Use detailed process instructions only when:
 - The exact process is required by the product
 - The model has repeatedly failed without them
@@ -23,6 +25,12 @@ Otherwise, avoid generic scaffolding such as:
 - "Always produce a detailed plan before answering"
 
 Avoid response-ceremony scaffolding unless it is part of the product contract. Do not add detailed rules for progress updates, heading usage, prose-vs-bullets, or final-answer choreography when a concise final-response expectation is enough.
+
+Prefer model configuration and harness design over prompt repetition:
+- Set reasoning level instead of saying "think harder".
+- Use `text.verbosity` when available instead of adding many output-length rules.
+- Put durable repository rules in guidance files.
+- Put tool-use mechanics in tool descriptions.
 
 ## Structured Reasoning
 
@@ -62,6 +70,7 @@ Verification should scale to risk and blast radius.
 - Shared, cross-module, or high-risk change: use broader tests.
 
 Avoid prompting for broad verification when the agent harness or repo guidance already handles it.
+Avoid prompting for verification on read-only analysis unless verification evidence is part of the requested deliverable.
 
 ## Prefilling (Claude-specific)
 
@@ -90,7 +99,9 @@ Assistant: {
 
 ## Output Schemas
 
-For consistent formatting, specify exact structure:
+Use an exact schema only when the output is consumed programmatically or format drift is a known failure. If the user only needs readable prose, prefer a simple final-response shape instead.
+
+Example:
 ```
 Return your response as JSON with this schema:
 {

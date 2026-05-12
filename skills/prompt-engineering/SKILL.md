@@ -48,6 +48,10 @@ Use only the parts needed for the request.
   - Constraints and boundaries
   - How to verify, scaled to risk
   - Required final response shape
+- For GPT-5.5 or similarly agentic models, bias toward an engineering-ticket prompt instead of a process script:
+  - State the target and success criteria clearly, then let the model choose the path.
+  - Keep harness behavior, tool behavior, and stable repo rules outside the task prompt when possible.
+  - Prefer model/API controls for model behavior (`reasoning`, `text.verbosity`, structured outputs) over stuffing operational details into the prompt.
 - Diagnose prompt failures:
   - Vague or conflicting objective ("help with", "optimize")
   - Missing context or source boundaries
@@ -84,6 +88,8 @@ For strong reasoning or agentic models, prefer a compact engineering-ticket shap
 [What the model should return]
 ```
 
+This shape is especially appropriate for GPT-5.5. Do not add generic instructions like "inspect first, make a plan, run tests, then summarize" unless the exact process is part of the product contract. For agent prompts, keep progress-update and final-answer rules short: commentary updates when something changes the user's understanding; final answers are concise reports.
+
 Add role, detailed guidelines, examples, or a step-by-step process only when they preserve the contract or fix an observed failure:
 
 ```markdown
@@ -119,6 +125,12 @@ Include only when useful:
 - [ ] Exact output schema, if the output is consumed programmatically or format drift is a known failure
 - [ ] Few-shot examples, for non-trivial, ambiguous, subjective, or repeatedly failing behavior
 - [ ] Step-by-step process, only when the process is part of the product contract
+
+Prefer configuration over prompt text when configuration is available:
+- [ ] Use reasoning level/model setting instead of prompting "think harder".
+- [ ] Use `text.verbosity` for length/detail control instead of repeated verbosity instructions.
+- [ ] Use structured outputs or an exact schema only when an exact response shape is required.
+- [ ] Use tool descriptions and guidance files instead of duplicating tool/repo rules in each task prompt.
 
 ## Test Cases
 

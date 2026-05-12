@@ -1,16 +1,18 @@
 # Common Failure Modes and Fixes
 
+Default to the smallest fix that preserves the product contract. Do not add schemas, examples, citations, or process steps unless they address the specific failure.
+
 ## Prompt Issues
 
 | Problem | Diagnosis | Fix |
 |---------|-----------|-----|
-| Too verbose output | No length constraint | Add "Be concise" or word/sentence limits |
+| Too verbose output | No length constraint or verbosity setting | Prefer `text.verbosity` when available; otherwise add one concise length expectation |
 | Ignores instructions | Critical constraint is buried, vague, or contradicted | Make the constraint prominent and concrete; repeat only in long prompts or after observed failures |
-| Hallucinations | No grounding constraint | Add "Only use provided context" + citation requirement |
-| Wrong format | No format example | Provide explicit schema with example output |
-| Inconsistent results | Ambiguous instructions | Add few-shot examples, be more specific |
+| Hallucinations | No source boundary | Add a clear source boundary, such as "use only the provided context." Require citations only when evidence traceability matters. |
+| Wrong format | Output contract is vague or underspecified | Make the expected output contract explicit. Use a schema when the output is programmatic or format drift is a known failure; add a short example only if instructions alone are insufficient. |
+| Inconsistent results | Ambiguous instructions | Tighten the success criteria first; add few-shot examples only if ambiguity remains or failures recur. |
 | Over-literal interpretation | Missing context on intent | Explain the WHY behind instructions |
-| Generic/bland output | No specificity guidance | Provide concrete alternatives and style examples |
+| Generic/bland output | No specificity guidance | Provide concrete success criteria or style constraints; add a short exemplar only if needed. |
 | Misses edge cases | No error handling | Add "If X, then Y" instructions |
 | Over-scaffolded prompt | Prompt dictates generic process: inspect, plan, edit, test, summarize | Replace with outcome, what good means, constraints, verification |
 | Task expansion | Prompt tells model to read all guidance or satisfy every possible rule | Say to apply only relevant guidance; treat files/skills as constraints and shortcuts |
@@ -19,6 +21,8 @@
 | Example bloat | Examples included for simple tasks | Add examples only for ambiguity, subjective judgment, or known failures |
 | Response-ceremony bloat | Prompt over-specifies updates, headings, bullet counts, or final-answer rituals | Replace with concise final-response expectations |
 | Wrong reasoning level | `high` used as default for GPT-5.5 | Use `medium` by default, `low` for narrow cheap checks, `xhigh` for maximum quality |
+| Length-control bloat | Prompt repeats detailed output-length and style instructions | Use `text.verbosity` or one concise final-response expectation when available |
+| Prompt-cache misconfiguration | GPT-5.5 configured with in-memory prompt caching | Use extended prompt caching instead; do not request in-memory caching for GPT-5.5 |
 
 ## Vague Verbs to Replace
 
