@@ -21,6 +21,7 @@ The script is idempotent and can be run multiple times safely.
 | Plugin | Description |
 |--------|-------------|
 | `safety-net` | Prompts for confirmation before dangerous shell commands (rm -rf, git reset --hard, etc.) |
+| `tmux-context-notifications` | Sends Amp completion notifications with tmux session/window/pane context via Ghostty/macOS alerts |
 
 Plugins are symlinked to `~/.config/amp/plugins/` by `link-all.sh`. Run Amp with `PLUGINS=all amp` to enable.
 
