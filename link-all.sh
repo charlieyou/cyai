@@ -247,6 +247,7 @@ for plugin_file in "$SCRIPT_DIR"/plugins/amp/*.ts; do
     [[ ! -f "$plugin_file" ]] && continue
     [[ "$plugin_file" == *.d.ts ]] && continue
     plugin_name="$(basename "$plugin_file")"
+    [[ "$plugin_name" == *.test.ts || "$plugin_name" == *.spec.ts ]] && continue
 
     target="$AMP_PLUGINS/$plugin_name"
     if [[ -L "$target" ]]; then

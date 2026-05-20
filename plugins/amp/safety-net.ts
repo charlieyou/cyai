@@ -6,10 +6,16 @@ interface DangerousPattern {
 	subcommand?: string
 	args?: string[]
 	reason: string
-	check?: (args: string[]) => boolean
+	check?: (args: string[], context: SafetyContext) => boolean
+}
+
+interface SafetyContext {
+	mktempDirVars: Set<string>
+	redirectedTmpFiles: Set<string>
 }
 
 const SYSTEM_PATHS = ['/etc', '/usr', '/var', '/bin', '/sbin', '/root']
+const ALLOWED_RECURSIVE_RM_DIR_NAMES = ['node_modules', '__pycache__']
 
 // Wrappers and which of their flags consume a following value
 const WRAPPER_FLAGS_WITH_VALUE: Record<string, string[]> = {
@@ -356,69 +362,157 @@ function hasDangerousPath(args: string[]): boolean {
 	})
 }
 
-function isTmpPath(arg: string): boolean {
-	if (/[`$]/.test(arg)) return false
-	if (!arg.startsWith('/')) return false
-
-	const normalized = normalizeAbsolutePath(arg)
-	return normalized === '/tmp' || normalized.startsWith('/tmp/')
+function rmTargets(args: string[]): string[] {
+	let afterOptions = false
+	return args.filter((arg) => {
+		if (!afterOptions && arg === '--') {
+			afterOptions = true
+			return false
+		}
+		if (!afterOptions && arg.startsWith('-')) return false
+		return true
+	})
 }
 
-function normalizeAbsolutePath(arg: string): string {
-	const parts: string[] = []
-	for (const part of arg.split('/')) {
-		if (!part || part === '.') continue
-		if (part === '..') {
-			parts.pop()
-			continue
-		}
-		parts.push(part)
+function isSafeRelativePath(target: string): boolean {
+	const normalized = stripMatchingQuotes(target).replace(/\/+$/, '')
+	if (normalized === '' || normalized.startsWith('/') || normalized.startsWith('~')) return false
+	if (normalized === '$HOME' || normalized.startsWith('$HOME/')) return false
+	return !normalized.split('/').includes('..')
+}
+
+function isAllowedRecursiveRmDirTarget(target: string): boolean {
+	if (!isSafeRelativePath(target)) return false
+	const normalized = target.replace(/\/+$/, '')
+	return ALLOWED_RECURSIVE_RM_DIR_NAMES.some((dir) => normalized === dir || normalized.endsWith(`/${dir}`))
+}
+
+function isAllowedRecursiveRm(args: string[], context: SafetyContext): boolean {
+	const targets = rmTargets(args)
+	return targets.length > 0 && targets.every((target) =>
+		isAllowedRecursiveRmDirTarget(target) ||
+		isAllowedMktempDirTarget(target, context.mktempDirVars) ||
+		isAllowedRedirectedTmpFileTarget(target, context.redirectedTmpFiles)
+	)
+}
+
+function isInsideShellQuotes(input: string, index: number): boolean {
+	let inSingle = false
+	let inDouble = false
+	for (let i = 0; i < index; i++) {
+		const ch = input[i]
+		if (ch === '\\' && !inSingle) { i++; continue }
+		if (ch === "'" && !inDouble) { inSingle = !inSingle; continue }
+		if (ch === '"' && !inSingle) inDouble = !inDouble
 	}
-	return '/' + parts.join('/')
+	return inSingle || inDouble
 }
 
-function isStandaloneRedirection(arg: string): boolean {
-	return /^(?:\d*)?(?:>>?|<|<<|<<<|<>|>&|<&|>\||&>|&>>)$/.test(arg)
+function mktempDirVars(cleanedCmdString: string): Set<string> {
+	const vars = new Set<string>()
+	for (const match of cleanedCmdString.matchAll(/\b([A-Za-z_]\w*)=(?:"\$\(mktemp\s+-d(?:\s+[^)]*)?\)"|\$\(mktemp\s+-d(?:\s+[^)]*)?\))/g)) {
+		if (isInsideShellQuotes(cleanedCmdString, match.index ?? 0)) continue
+		vars.add(match[1])
+	}
+	return vars
 }
 
-function isAttachedRedirection(arg: string): boolean {
-	return /^(?:\d*)?(?:>>?|<|<<|<<<|<>|>&|<&|>\||&>|&>>).+/.test(arg)
+function stripMatchingQuotes(value: string): string {
+	if (
+		(value.startsWith('"') && value.endsWith('"')) ||
+		(value.startsWith("'") && value.endsWith("'"))
+	) {
+		return value.slice(1, -1)
+	}
+	return value
 }
 
-function rmLiteralTargets(args: string[]): string[] {
+function redirectionTargets(segment: string): string[] {
 	const targets: string[] = []
+	let inSingle = false
+	let inDouble = false
+	let i = 0
 
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i]
+	while (i < segment.length) {
+		const ch = segment[i]
+		if (ch === '\\' && !inSingle) { i += 2; continue }
+		if (ch === "'" && !inDouble) { inSingle = !inSingle; i++; continue }
+		if (ch === '"' && !inSingle) { inDouble = !inDouble; i++; continue }
 
-		if (arg === '--') continue
-		if (isStandaloneRedirection(arg)) {
-			i++
+		if (!inSingle && !inDouble && ch === '>') {
+			while (segment[i] === '>') i++
+			while (/\s/.test(segment[i] ?? '')) i++
+			if (segment[i] === '&') continue
+
+			let target = ''
+			let quote: string | null = null
+			while (i < segment.length) {
+				const targetCh = segment[i]
+				if (quote) {
+					if (targetCh === quote) { quote = null; i++; continue }
+					target += targetCh
+					i++
+					continue
+				}
+				if (targetCh === "'" || targetCh === '"') { quote = targetCh; i++; continue }
+				if (/\s|[;|&]/.test(targetCh)) break
+				target += targetCh
+				i++
+			}
+			if (target) targets.push(target)
 			continue
 		}
-		if (isAttachedRedirection(arg)) continue
-		if (arg.startsWith('-')) continue
 
-		targets.push(arg)
+		i++
 	}
 
 	return targets
 }
 
-function recursiveRmTargetsOutsideTmp(args: string[]): boolean {
-	if (!hasFlag(args, '-r', '-R') && !args.includes('--recursive')) return false
-
-	const targets = rmLiteralTargets(args)
-	return targets.length === 0 || targets.some((arg) => !isTmpPath(arg))
+function redirectedTmpFiles(cleanedCmdString: string): Set<string> {
+	const files = new Set<string>()
+	for (const segment of splitTopLevelCommands(cleanedCmdString)) {
+		for (const target of redirectionTargets(segment)) {
+			if (target.startsWith('/tmp/') && !/[?*[]/.test(target)) {
+				files.add(target)
+			}
+		}
+	}
+	return files
 }
 
-function recursiveRmOutsideTmp(cmdString: string): boolean {
-	return splitTopLevelCommands(stripComments(cmdString)).some((segment) => {
-		const tokens = tokenize(segment)
-		return tokens.some((token, index) =>
-			basename(token) === 'rm' && recursiveRmTargetsOutsideTmp(tokens.slice(index + 1))
-		)
-	})
+function variableNameReference(target: string): string | null {
+	const quoted = target.match(/^"\$([A-Za-z_]\w*)"$/)
+	if (quoted) return quoted[1]
+
+	const braced = target.match(/^\$\{([A-Za-z_]\w*)\}$/)
+	if (braced) return braced[1]
+
+	const bare = target.match(/^\$([A-Za-z_]\w*)$/)
+	if (bare) return bare[1]
+
+	return null
+}
+
+function isAllowedMktempDirTarget(target: string, vars: Set<string>): boolean {
+	const varName = variableNameReference(target)
+	return varName !== null && vars.has(varName)
+}
+
+function isAllowedRedirectedTmpFileTarget(target: string, redirectedFiles: Set<string>): boolean {
+	return redirectedFiles.has(stripMatchingQuotes(target))
+}
+
+function safetyContext(cmdString: string): SafetyContext {
+	const cleaned = stripComments(cmdString)
+	return {
+		mktempDirVars: mktempDirVars(cleaned),
+		redirectedTmpFiles: redirectedTmpFiles(cleaned),
+	}
+}
+
+function isRecursiveRm(cmd: ParsedCommand): boolean {
+	return cmd.base === 'rm' && (hasFlag(cmd.args, '-r', '-R') || cmd.args.includes('--recursive'))
 }
 
 /** For git, skip global options to find the real subcommand */
@@ -495,9 +589,12 @@ const DANGEROUS_PATTERNS: DangerousPattern[] = [
 		reason: 'Destroys remote history.',
 		check: (args) =>
 			hasFlag(args, '-f') ||
+			hasFlag(args, '-d') ||
 			args.includes('--force') ||
+			args.includes('--delete') ||
+			args.includes('--mirror') ||
 			hasArgPrefix(args, '--force-with-lease') ||
-			args.some((a) => a.startsWith('+') && a.includes(':')),
+			args.some((a) => a.startsWith('+') || /^:[^/]/.test(a)),
 	},
 	{
 		command: 'git',
@@ -528,7 +625,7 @@ const DANGEROUS_PATTERNS: DangerousPattern[] = [
 	{
 		command: 'rm',
 		reason: 'Recursive file deletion.',
-		check: recursiveRmTargetsOutsideTmp,
+		check: (args, context) => (hasFlag(args, '-r', '-R') || args.includes('--recursive')) && !isAllowedRecursiveRm(args, context),
 	},
 	{
 		command: 'find',
@@ -569,23 +666,34 @@ function formatDanger(base: string, subcommand: string | undefined, reason: stri
 }
 
 function checkDangerous(cmdString: string): string | null {
+	const context = safetyContext(cmdString)
+	const parsedCommands = parseAllCommands(cmdString)
+
 	// Conservative fallback: if the command contains shell syntax we can't parse reliably,
 	// check if it also contains dangerous-looking keywords — if so, prompt
 	if (UNSUPPORTED_SYNTAX.test(cmdString)) {
-		const dangerousKeywords = /\bgit\s+reset\s+--hard|\bgit\s+clean\s+-[^\s]*f|\bgit\s+push\s+--force|\bgit\s+checkout\s+--\s|\bdd\s|\bmkfs/
-		if (dangerousKeywords.test(cmdString) || recursiveRmOutsideTmp(cmdString)) {
+		const dangerousNonRmKeywords = /\bgit\s+checkout\s+--\s|\bgit\s+restore\b|\bgit\s+reset\s+--(?:hard|merge)\b|\bgit\s+clean\b(?=[^\n;|&]*-[-A-Za-z]*f)|\bgit\s+push\b(?=[^\n;|&]*(?:\s-f\b|\s-d\b|\s--force(?:[=\s]|$)|\s--force-with-lease(?:[=\s]|$)|\s--delete\b|\s--mirror\b|\s\+\S+|\s:[^\s/]))|\bgit\s+branch\b(?=[^\n;|&]*\s-D\b)|\bgit\s+stash\s+(?:drop|clear)\b|\bgit\s+worktree\s+remove\b(?=[^\n;|&]*(?:\s-f\b|\s--force\b))|\bfind\b(?=[^\n;|&]*\s-delete\b)|\b(?:xargs|parallel)\b(?=[^\n;|&]*\brm\b)|\b(?:dd|mkfs(?:\.\S+)?)\b|\b(?:chmod|chown)\b(?=[^\n;|&]*(?:\s-R\b|\s--recursive\b)(?:\s\/(?:etc|usr|var|bin|sbin|root)(?:\/|\s|$)|\s\/\s|\s~(?:\/|\s|$)|\s\$HOME(?:\/|\s|$)))/
+		if (dangerousNonRmKeywords.test(cmdString)) {
 			return `⚠️ Complex shell command contains potentially dangerous operations.\n\nCommand: ${cmdString}`
+		}
+
+		const dangerousRmKeywords = /\brm\s+-[^\s]*r|\brm\s+--recursive/
+		if (dangerousRmKeywords.test(cmdString)) {
+			const recursiveRmCommands = parsedCommands.filter(isRecursiveRm)
+			if (recursiveRmCommands.length === 0 || recursiveRmCommands.some((cmd) => !isAllowedRecursiveRm(cmd.args, context))) {
+				return `⚠️ Complex shell command contains potentially dangerous operations.\n\nCommand: ${cmdString}`
+			}
 		}
 	}
 
 	// mkfs.* prefix matching
-	for (const cmd of parseAllCommands(cmdString)) {
+	for (const cmd of parsedCommands) {
 		if (cmd.base === 'mkfs' || cmd.base.startsWith('mkfs.')) {
 			return formatDanger(cmd.base, undefined, 'Formats a filesystem, destroying all data on the device.', cmdString)
 		}
 	}
 
-	for (const cmd of parseAllCommands(cmdString)) {
+	for (const cmd of parsedCommands) {
 		for (const pattern of DANGEROUS_PATTERNS) {
 			if (cmd.base !== pattern.command) continue
 
@@ -601,7 +709,7 @@ function checkDangerous(cmdString: string): string | null {
 			if (pattern.subcommand && effectiveSubcommand !== pattern.subcommand) continue
 
 			if (pattern.check) {
-				if (pattern.check(effectiveArgs))
+				if (pattern.check(effectiveArgs, context))
 					return formatDanger(cmd.base, pattern.subcommand, pattern.reason, cmdString)
 				continue
 			}
