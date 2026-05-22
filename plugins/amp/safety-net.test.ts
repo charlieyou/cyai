@@ -72,14 +72,29 @@ wc -l "$run_dir/metrics.csv"
 find "$run_dir/checkpoints" -type f | wc -l
 rm -rf "$tmp"`
 
+	const externalCalibrationCommand = `python3 - <<'PY'
+from pathlib import Path
+p=Path('/tmp/nlhe_turnriver_3way_external_calibration.yaml')
+s=p.read_text()
+s=s.replace('variants:\n  - name: C\n', '''variants:\n  - name: A\n    config:\n      sampler: external\n  - name: C\n''')
+p.write_text(s)
+PY
+rm -rf /tmp/nlhe-turnriver-3way-external-calibration
+cargo run --release -p solver-experiments --bin run_mccfr_variants -- --config /tmp/nlhe_turnriver_3way_external_calibration.yaml --output-dir /tmp/nlhe-turnriver-3way-external-calibration --jobs 4`
+
 	test.each([
 		['original smoke command with redirected /tmp log', solverSmokeWithTmpLog],
 		['original smoke command with log inside temp dir', solverSmokeWithTmpLocalLog],
+		['external calibration command with /tmp cleanup', externalCalibrationCommand],
 		['generic mktemp cleanup', 'tmp=$(mktemp -d); echo hi; rm -rf "$tmp"'],
 		['quoted mktemp assignment cleanup', 'tmp="$(mktemp -d)"; echo hi; rm -rf $tmp'],
 		['templated mktemp cleanup', 'workdir=$(mktemp -d /tmp/foo.XXXXXX); echo hi; rm -rf $workdir'],
 		['braced mktemp var cleanup', 'tmp=$(mktemp -d); rm -rf "${tmp}"'],
 		['redirected /tmp file created in same command', 'tmp=$(mktemp -d); echo hi >/tmp/created.log; rm -rf "$tmp" /tmp/created.log'],
+		['direct /tmp directory cleanup', 'rm -rf /tmp/nlhe-turnriver-3way-external-calibration'],
+		['quoted direct /tmp directory cleanup', 'rm -rf "/tmp/nlhe-turnriver-3way-external-calibration"'],
+		['direct /tmp file cleanup', 'rm -rf /tmp/not-created.log'],
+		['direct /tmp cleanup with quoted text nearby', "echo ' > /tmp/keep-me'; rm -rf /tmp/keep-me"],
 		['relative node_modules cleanup', 'rm -rf node_modules'],
 		['relative nested __pycache__ cleanup', 'rm -rf ./pkg/__pycache__'],
 	])('allows %s', async (_name, command) => {
@@ -90,10 +105,10 @@ rm -rf "$tmp"`
 		['mktemp cleanup followed by force push', 'tmp=$(mktemp -d); rm -rf "$tmp"; git push --force'],
 		['mktemp cleanup followed by dd', 'tmp=$(mktemp -d); rm -rf "$tmp"; dd if=/dev/zero of=/dev/sda'],
 		['commented mktemp assignment', '# tmp=$(mktemp -d)\nrm -rf "$tmp"'],
-		['quoted text containing tmp redirection', "echo ' > /tmp/keep-me'; tmp=$(mktemp -d); rm -rf /tmp/keep-me"],
 		['different variable cleanup', 'tmp=$(mktemp -d); rm -rf "$other"'],
 		['mktemp cleanup plus root delete', 'tmp=$(mktemp -d); rm -rf "$tmp" /'],
-		['uncreated /tmp file cleanup', 'tmp=$(mktemp -d); rm -rf "$tmp" /tmp/not-created.log'],
+		['tmp root delete', 'rm -rf /tmp'],
+		['tmp parent traversal delete', 'rm -rf /tmp/../home'],
 		['absolute node_modules cleanup', 'rm -rf /root/node_modules'],
 		['parent-traversing node_modules cleanup', 'rm -rf ../../other-repo/node_modules'],
 		['force refspec push', 'git push origin +main'],

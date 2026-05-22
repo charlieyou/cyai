@@ -387,10 +387,18 @@ function isAllowedRecursiveRmDirTarget(target: string): boolean {
 	return ALLOWED_RECURSIVE_RM_DIR_NAMES.some((dir) => normalized === dir || normalized.endsWith(`/${dir}`))
 }
 
+function isAllowedTmpTarget(target: string): boolean {
+	const normalized = stripMatchingQuotes(target).replace(/\/+$/, '')
+	if (normalized === '/tmp') return false
+	if (!normalized.startsWith('/tmp/')) return false
+	return !normalized.slice('/tmp/'.length).split('/').includes('..')
+}
+
 function isAllowedRecursiveRm(args: string[], context: SafetyContext): boolean {
 	const targets = rmTargets(args)
 	return targets.length > 0 && targets.every((target) =>
 		isAllowedRecursiveRmDirTarget(target) ||
+		isAllowedTmpTarget(target) ||
 		isAllowedMktempDirTarget(target, context.mktempDirVars) ||
 		isAllowedRedirectedTmpFileTarget(target, context.redirectedTmpFiles)
 	)
