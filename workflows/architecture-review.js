@@ -27,16 +27,16 @@ const OUT = (args && args.out) || 'docs/architecture-review.md'
 // Model assignment by role. Each mode ships a cost/quality-tuned default map
 // (cheap models where mistakes are recoverable downstream; opus where recall or
 // precision is not). Callers override globally with args.model or per role with
-// args.models = { scout, finder, merge, verify, critic, synth }.
+// args.models = { scout, finder, merge, verify, synth }.
 // Precedence: args.models[role] > args.model > per-mode default.
 const VALID_MODELS = ['opus', 'sonnet', 'haiku']
 const validModel = (m) => (VALID_MODELS.includes(m) ? m : undefined)
 const MODE_MODELS = {
   // fast mirrors smart: cheap sweep; opus only on finder (missed issues are unrecoverable).
-  fast: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', critic: 'haiku', synth: 'sonnet' },
-  smart: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', critic: 'haiku', synth: 'sonnet' },
-  // max: sonnet everywhere except the precision-critical finder + verify (3-vote panel) on opus.
-  max: { scout: 'sonnet', finder: 'opus', merge: 'sonnet', verify: 'opus', critic: 'sonnet', synth: 'sonnet' },
+  fast: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', synth: 'sonnet' },
+  smart: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', synth: 'sonnet' },
+  // max is identical to smart except models: sonnet everywhere except opus on finder + verify.
+  max: { scout: 'sonnet', finder: 'opus', merge: 'sonnet', verify: 'opus', synth: 'sonnet' },
 }
 const MODELS = (args && args.models) || {}
 const DEFAULT_MODEL = validModel(args && args.model)
@@ -122,14 +122,6 @@ For any oversized core-path file, either flag it or explicitly justify why it is
 - Under-abstracted logic where similar flows diverge unnecessarily.
 - Leaky abstractions that force callers to know internal details.`,
   },
-  crosscutting: {
-    key: 'crosscutting',
-    title: 'Cross-cutting & systemic',
-    look: `- Issues that span several of: boundaries, testability, complexity, cohesion, abstraction.
-- Systemic patterns repeated across the codebase that no single-area lens would catch.
-- Inconsistent error handling / validation across similar flows.
-Deliberately look for what a single-category reviewer would miss.`,
-  },
 }
 
 function lensesForMode(mode) {
@@ -149,9 +141,8 @@ function lensesForMode(mode) {
       },
     ]
   }
-  const five = [LENSES.boundaries, LENSES.testability, LENSES.complexity, LENSES.cohesion, LENSES.abstraction]
-  if (mode === 'max') return [...five, LENSES.crosscutting]
-  return five // smart
+  // smart and max share these five lenses; max differs from smart only by model assignment.
+  return [LENSES.boundaries, LENSES.testability, LENSES.complexity, LENSES.cohesion, LENSES.abstraction]
 }
 
 // ---------------------------------------------------------------------------
@@ -260,12 +251,6 @@ const VERDICT_SCHEMA = {
   required: ['isReal', 'reason'],
 }
 
-const CRITIC_SCHEMA = {
-  type: 'object',
-  properties: { gaps: { type: 'array', items: { type: 'string' } } },
-  required: ['gaps'],
-}
-
 const WRITE_SCHEMA = {
   type: 'object',
   properties: {
@@ -351,21 +336,18 @@ Merge by ROOT CAUSE, not file overlap:
 Return ONLY the structured object (deduped, id'd findings).`
 }
 
-function verifyPrompt(finding, voteIndex, votes) {
-  // In max mode, give each of the 3 voters a distinct lens so the panel is
-  // perspective-diverse rather than three identical refuters.
-  const lensByVote = [
-    'CORRECTNESS: does the cited code actually do/contain what the finding claims?',
-    'SEVERITY: is the severity justified, or exaggerated for what the code shows?',
-    'REPRODUCIBILITY: can you point to the concrete scenario where this issue bites? If only speculative, refute.',
-  ]
-  const angle = votes > 1 ? `\n\nVERIFICATION ANGLE for this vote: ${lensByVote[voteIndex % lensByVote.length]}` : ''
+function verifyPrompt(finding) {
   return `You are ADVERSARIALLY VERIFYING one architecture-review finding. Your job is NOT to review the architecture — it is to decide whether THIS claim is accurate. Default to refuting (isReal=false) if the evidence does not clearly support it.
 
 READ-ONLY. Read the referenced files at the cited lines and check the claim.
 
 Finding:
 ${JSON.stringify(finding, null, 2)}
+
+Check three angles before deciding:
+- CORRECTNESS: does the cited code actually do/contain what the finding claims?
+- SEVERITY: is the stated severity justified for what the code shows, or exaggerated?
+- REPRODUCIBILITY: is there a concrete scenario where this bites, or is it only speculative?
 
 Set isReal=false ONLY if the finding is:
 - Incorrect: the code does not match what the finding claims.
@@ -378,19 +360,7 @@ Severity being one level too high is NOT grounds to refute. If the design proble
 Return ONLY the structured verdict: isReal, calibratedSeverity, lineRefsAccurate, reason (one sentence naming the single decisive factor).`
 }
 
-function criticPrompt(survivors, map) {
-  return `You are a COMPLETENESS CRITIC for an architecture review. Given the verified findings and the system map, name what is MISSING — areas/modules not examined or a likely class of issue no lens covered. You see only finding titles, so do NOT second-guess their evidence; focus strictly on coverage gaps and unexamined areas. Be concrete and brief. Do not invent findings; list gaps the synthesizer should disclose.
-
-Verified findings:
-${JSON.stringify(survivors.map((s) => ({ id: s.id, title: s.title, severity: s.severity })), null, 2)}
-
-System map:
-${JSON.stringify(map, null, 2)}
-
-Return ONLY { gaps: [...] }.`
-}
-
-function synthPrompt(survivors, map, gaps, lensesUsed) {
+function synthPrompt(survivors, map, lensesUsed) {
   const lensList = (lensesUsed || []).map((l) => l.title).join(', ')
   return `You are the SYNTHESIZER. Write the final architecture-review artifact to disk using the Write tool, then return the structured result.
 
@@ -402,13 +372,10 @@ ${JSON.stringify(survivors, null, 2)}
 System map (for the Method block):
 ${JSON.stringify(map, null, 2)}
 
-Coverage gaps to disclose (may be empty):
-${JSON.stringify(gaps, null, 2)}
-
 REQUIRED ARTIFACT FORMAT — the file MUST:
 1. Begin EXACTLY with this line:
 <!-- review-type: architecture-review -->
-2. Then a "## Method" block (3-6 bullets): tools/approach used, entry points reviewed, key files scanned, the hotspot inventory (one bullet), lenses run (mode ${MODE}): ${lensList} — list ALL of these even if a lens produced no surviving findings, so coverage is not understated; assumptions/unknowns; and the coverage gaps if any.
+2. Then a "## Method" block (3-6 bullets): tools/approach used, entry points reviewed, key files scanned, the hotspot inventory (one bullet), lenses run (mode ${MODE}): ${lensList} — list ALL of these even if a lens produced no surviving findings, so coverage is not understated; assumptions/unknowns.
 3. Then a single unified list of issues sorted by severity. For EACH issue use this shape:
 
 ### [Severity] Short title
@@ -441,7 +408,7 @@ Return: path, a 2-4 sentence summary of key findings, and counts {critical, high
 // Orchestration
 // ---------------------------------------------------------------------------
 log(`architecture-review: mode=${MODE}, out=${OUT}${FOCUS ? `, focus="${FOCUS}"` : ''}`)
-log(`models: ${['scout', 'finder', 'merge', 'verify', 'critic', 'synth'].map((r) => `${r}=${modelFor(r) || 'inherit'}`).join(', ')}`)
+log(`models: ${['scout', 'finder', 'merge', 'verify', 'synth'].map((r) => `${r}=${modelFor(r) || 'inherit'}`).join(', ')}`)
 
 phase('Map')
 const map = await agent(scoutPrompt(), withModel({ label: 'scout', phase: 'Map', schema: SCOUT_SCHEMA }, 'scout'))
@@ -469,21 +436,13 @@ if (raw.length > 0) {
   log(`Merge: ${merged.length} findings after dedup`)
 
   phase('Verify')
-  const votes = MODE === 'max' ? 3 : 1
   survivors = (
     await parallel(
       merged.map((f) => () =>
-        parallel(
-          Array.from({ length: votes }, (_, i) => () =>
-            agent(verifyPrompt(f, i, votes), withModel({ label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA }, 'verify')),
-          ),
-        ).then((verdicts) => {
-          const vs = verdicts.filter(Boolean)
-          const reals = vs.filter((v) => v.isReal)
-          const keep = reals.length > votes / 2
-          const sev = (reals[0] && reals[0].calibratedSeverity) || f.severity
-          return { finding: { ...f, severity: sev }, keep }
-        }),
+        agent(verifyPrompt(f), withModel({ label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA }, 'verify')).then((v) => ({
+          finding: { ...f, severity: (v && v.isReal && v.calibratedSeverity) || f.severity },
+          keep: !!(v && v.isReal),
+        })),
       ),
     )
   )
@@ -493,15 +452,8 @@ if (raw.length > 0) {
   log(`Verify: ${survivors.length}/${merged.length} findings survived`)
 }
 
-// Optional completeness critic (max mode only).
-let gaps = []
-if (MODE === 'max') {
-  const criticRes = await agent(criticPrompt(survivors, map), withModel({ label: 'completeness-critic', phase: 'Verify', schema: CRITIC_SCHEMA }, 'critic'))
-  gaps = criticRes.gaps || []
-}
-
 phase('Write')
-const result = await agent(synthPrompt(survivors, map, gaps, lenses), withModel({ label: 'synthesize', phase: 'Write', schema: WRITE_SCHEMA }, 'synth'))
+const result = await agent(synthPrompt(survivors, map, lenses), withModel({ label: 'synthesize', phase: 'Write', schema: WRITE_SCHEMA }, 'synth'))
 log(`Write: artifact at ${result.path}`)
 
 return result
