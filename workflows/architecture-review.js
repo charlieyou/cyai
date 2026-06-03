@@ -24,6 +24,30 @@ const FOCUS = (args && args.focus) || ''
 const SCOPE = (args && args.scope) || 'the entire repository, starting from entry points and high-traffic modules'
 const OUT = (args && args.out) || 'docs/architecture-review.md'
 
+// Model assignment by role. Each mode ships a cost/quality-tuned default map
+// (cheap models where mistakes are recoverable downstream; opus where recall or
+// precision is not). Callers override globally with args.model or per role with
+// args.models = { scout, finder, merge, verify, critic, synth }.
+// Precedence: args.models[role] > args.model > per-mode default.
+const VALID_MODELS = ['opus', 'sonnet', 'haiku']
+const validModel = (m) => (VALID_MODELS.includes(m) ? m : undefined)
+const MODE_MODELS = {
+  // fast mirrors smart: cheap sweep; opus only on finder (missed issues are unrecoverable).
+  fast: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', critic: 'haiku', synth: 'sonnet' },
+  smart: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', critic: 'haiku', synth: 'sonnet' },
+  // max: sonnet everywhere except the precision-critical finder + verify (3-vote panel) on opus.
+  max: { scout: 'sonnet', finder: 'opus', merge: 'sonnet', verify: 'opus', critic: 'sonnet', synth: 'sonnet' },
+}
+const MODELS = (args && args.models) || {}
+const DEFAULT_MODEL = validModel(args && args.model)
+const modelFor = (role) => validModel(MODELS[role]) || DEFAULT_MODEL || (MODE_MODELS[MODE] && MODE_MODELS[MODE][role])
+// Merge a resolved model into agent opts only when set, so `undefined` never
+// clobbers the inherited session model.
+const withModel = (opts, role) => {
+  const m = modelFor(role)
+  return m ? { ...opts, model: m } : opts
+}
+
 const focusLine = FOCUS ? `\n\nFOCUS: pay special attention to: ${FOCUS}` : ''
 
 // ---------------------------------------------------------------------------
@@ -417,9 +441,10 @@ Return: path, a 2-4 sentence summary of key findings, and counts {critical, high
 // Orchestration
 // ---------------------------------------------------------------------------
 log(`architecture-review: mode=${MODE}, out=${OUT}${FOCUS ? `, focus="${FOCUS}"` : ''}`)
+log(`models: ${['scout', 'finder', 'merge', 'verify', 'critic', 'synth'].map((r) => `${r}=${modelFor(r) || 'inherit'}`).join(', ')}`)
 
 phase('Map')
-const map = await agent(scoutPrompt(), { label: 'scout', phase: 'Map', schema: SCOUT_SCHEMA })
+const map = await agent(scoutPrompt(), withModel({ label: 'scout', phase: 'Map', schema: SCOUT_SCHEMA }, 'scout'))
 
 phase('Find')
 const lenses = lensesForMode(MODE)
@@ -427,7 +452,7 @@ log(`Find: ${lenses.length} lenses — ${lenses.map((l) => l.key).join(', ')}`)
 const raw = (
   await parallel(
     lenses.map((l) => () =>
-      agent(finderPrompt(l, map), { label: `find:${l.key}`, phase: 'Find', schema: FINDINGS_SCHEMA }),
+      agent(finderPrompt(l, map), withModel({ label: `find:${l.key}`, phase: 'Find', schema: FINDINGS_SCHEMA }, 'finder')),
     ),
   )
 )
@@ -439,7 +464,7 @@ let survivors = []
 if (raw.length > 0) {
   // Barrier: dedup needs the whole set at once.
   phase('Merge')
-  const mergedRes = await agent(mergePrompt(raw), { label: 'merge', phase: 'Merge', schema: MERGED_SCHEMA })
+  const mergedRes = await agent(mergePrompt(raw), withModel({ label: 'merge', phase: 'Merge', schema: MERGED_SCHEMA }, 'merge'))
   const merged = mergedRes.findings || []
   log(`Merge: ${merged.length} findings after dedup`)
 
@@ -450,7 +475,7 @@ if (raw.length > 0) {
       merged.map((f) => () =>
         parallel(
           Array.from({ length: votes }, (_, i) => () =>
-            agent(verifyPrompt(f, i, votes), { label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA }),
+            agent(verifyPrompt(f, i, votes), withModel({ label: `verify:${f.id}`, phase: 'Verify', schema: VERDICT_SCHEMA }, 'verify')),
           ),
         ).then((verdicts) => {
           const vs = verdicts.filter(Boolean)
@@ -471,12 +496,12 @@ if (raw.length > 0) {
 // Optional completeness critic (max mode only).
 let gaps = []
 if (MODE === 'max') {
-  const criticRes = await agent(criticPrompt(survivors, map), { label: 'completeness-critic', phase: 'Verify', schema: CRITIC_SCHEMA })
+  const criticRes = await agent(criticPrompt(survivors, map), withModel({ label: 'completeness-critic', phase: 'Verify', schema: CRITIC_SCHEMA }, 'critic'))
   gaps = criticRes.gaps || []
 }
 
 phase('Write')
-const result = await agent(synthPrompt(survivors, map, gaps, lenses), { label: 'synthesize', phase: 'Write', schema: WRITE_SCHEMA })
+const result = await agent(synthPrompt(survivors, map, gaps, lenses), withModel({ label: 'synthesize', phase: 'Write', schema: WRITE_SCHEMA }, 'synth'))
 log(`Write: artifact at ${result.path}`)
 
 return result
