@@ -12,11 +12,12 @@ AGENTS_SKILLS="$HOME/.agents/skills"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
 CODEX_PROMPTS="$HOME/.codex/prompts"
 CLAUDE_AGENTS="$HOME/.claude/agents"
+CLAUDE_WORKFLOWS="$HOME/.claude/workflows"
 AMP_PLUGINS="$HOME/.config/amp/plugins"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 STATUSLINE_SCRIPT="$SCRIPT_DIR/.claude/statusline.sh"
 
-mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$AMP_PLUGINS"
+mkdir -p "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$CLAUDE_WORKFLOWS" "$AMP_PLUGINS"
 
 # Statusline is configured in settings.json instead of symlinked into ~/.claude.
 if [[ -L "$HOME/.claude/statusline.sh" ]]; then
@@ -30,7 +31,7 @@ fi
 
 # Clean up stale symlinks (broken symlinks in managed directories)
 cleaned=()
-for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$AMP_PLUGINS" "$HOME/.claude" "$HOME/.local/bin"; do
+for dir in "$CLAUDE_SKILLS" "$CODEX_SKILLS" "$AGENTS_SKILLS" "$CLAUDE_COMMANDS" "$CODEX_PROMPTS" "$CLAUDE_AGENTS" "$CLAUDE_WORKFLOWS" "$AMP_PLUGINS" "$HOME/.claude" "$HOME/.local/bin"; do
     for link in "$dir"/*; do
         [[ ! -L "$link" ]] && continue
         # Clean any broken symlink in managed directories
@@ -146,6 +147,29 @@ for agent_file in "$SCRIPT_DIR"/agents/*.md; do
     fi
     ln -s "$agent_file" "$target"
     agents+=("${agent_name%.md}")
+done
+
+# Link workflows (files) — Claude Code only
+workflows=()
+for wf_file in "$SCRIPT_DIR"/workflows/*.js; do
+    [[ ! -f "$wf_file" ]] && continue
+    wf_name="$(basename "$wf_file")"
+
+    target="$CLAUDE_WORKFLOWS/$wf_name"
+    if [[ -L "$target" ]]; then
+        # Only remove if it points to this repo
+        if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+            rm "$target"
+        else
+            echo "Warning: $target is a symlink to another location, skipping"
+            continue
+        fi
+    elif [[ -e "$target" ]]; then
+        echo "Warning: $target exists and is not a symlink, skipping"
+        continue
+    fi
+    ln -s "$wf_file" "$target"
+    workflows+=("${wf_name%.js}")
 done
 
 # Link bin scripts
@@ -268,6 +292,7 @@ done
 echo "Linked ${#skills[@]} skills: ${skills[*]}"
 echo "Linked ${#commands[@]} commands: ${commands[*]}"
 echo "Linked ${#agents[@]} agents: ${agents[*]}"
+echo "Linked ${#workflows[@]} workflows: ${workflows[*]}"
 echo "Linked ${#bins[@]} bins: ${bins[*]}"
 echo "Linked ${#claude_files[@]} claude configs: ${claude_files[*]}"
 echo "Linked ${#amp_plugins[@]} amp plugins: ${amp_plugins[*]}"
