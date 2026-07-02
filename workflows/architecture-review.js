@@ -24,19 +24,18 @@ const FOCUS = (args && args.focus) || ''
 const SCOPE = (args && args.scope) || 'the entire repository, starting from entry points and high-traffic modules'
 const OUT = (args && args.out) || 'docs/architecture-review.md'
 
-// Model assignment by role. Each mode ships a cost/quality-tuned default map
-// (cheap models where mistakes are recoverable downstream; opus where recall or
-// precision is not). Callers override globally with args.model or per role with
+// Model assignment by role. Each mode ships a cost/quality-tuned default map:
+// fast is Sonnet everywhere except Opus discovery; smart spends Opus on the
+// lossy judgment phases; max uses Fable only where it has the highest leverage.
+// Callers override globally with args.model or per role with
 // args.models = { scout, finder, merge, verify, synth }.
 // Precedence: args.models[role] > args.model > per-mode default.
-const VALID_MODELS = ['opus', 'sonnet', 'haiku']
+const VALID_MODELS = ['opus', 'sonnet', 'fable']
 const validModel = (m) => (VALID_MODELS.includes(m) ? m : undefined)
 const MODE_MODELS = {
-  // fast mirrors smart: cheap sweep; opus only on finder (missed issues are unrecoverable).
-  fast: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', synth: 'sonnet' },
-  smart: { scout: 'haiku', finder: 'opus', merge: 'sonnet', verify: 'sonnet', synth: 'sonnet' },
-  // max is identical to smart except models: sonnet everywhere except opus on finder + verify.
-  max: { scout: 'sonnet', finder: 'opus', merge: 'sonnet', verify: 'opus', synth: 'sonnet' },
+  fast: { scout: 'sonnet', finder: 'opus', merge: 'sonnet', verify: 'sonnet', synth: 'sonnet' },
+  smart: { scout: 'sonnet', finder: 'opus', merge: 'opus', verify: 'opus', synth: 'sonnet' },
+  max: { scout: 'opus', finder: 'fable', merge: 'opus', verify: 'fable', synth: 'sonnet' },
 }
 const MODELS = (args && args.models) || {}
 const DEFAULT_MODEL = validModel(args && args.model)
