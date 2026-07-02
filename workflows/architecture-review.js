@@ -19,10 +19,19 @@ export const meta = {
 //   scope : files/dirs to review                          (default whole repo)
 //   out   : artifact path                                 (default docs/architecture-review.md)
 // ---------------------------------------------------------------------------
-const MODE = (args && args.mode && ['fast', 'smart', 'max'].includes(args.mode)) ? args.mode : 'smart'
-const FOCUS = (args && args.focus) || ''
-const SCOPE = (args && args.scope) || 'the entire repository, starting from entry points and high-traffic modules'
-const OUT = (args && args.out) || 'docs/architecture-review.md'
+// args may arrive as an object or as a CLI-style string (skill invocations pass "--mode max").
+const parseArgString = (s) => {
+  const out = {}
+  const re = /--([\w-]+)(?:[= ]("[^"]*"|[^-\s][^\s]*))?/g
+  let m
+  while ((m = re.exec(s))) out[m[1]] = m[2] ? m[2].replace(/^"|"$/g, '') : true
+  return out
+}
+const ARGS = typeof args === 'string' ? parseArgString(args) : (args || {})
+const MODE = (ARGS.mode && ['fast', 'smart', 'max'].includes(ARGS.mode)) ? ARGS.mode : 'smart'
+const FOCUS = ARGS.focus || ''
+const SCOPE = ARGS.scope || 'the entire repository, starting from entry points and high-traffic modules'
+const OUT = ARGS.out || 'docs/architecture-review.md'
 
 // Model assignment by role. Each mode ships a cost/quality-tuned default map:
 // fast is Sonnet everywhere except Opus discovery; smart spends Opus on the
@@ -37,8 +46,8 @@ const MODE_MODELS = {
   smart: { scout: 'sonnet', finder: 'opus', merge: 'opus', verify: 'opus', synth: 'sonnet' },
   max: { scout: 'opus', finder: 'fable', merge: 'opus', verify: 'fable', synth: 'sonnet' },
 }
-const MODELS = (args && args.models) || {}
-const DEFAULT_MODEL = validModel(args && args.model)
+const MODELS = ARGS.models || {}
+const DEFAULT_MODEL = validModel(ARGS.model)
 const modelFor = (role) => validModel(MODELS[role]) || DEFAULT_MODEL || (MODE_MODELS[MODE] && MODE_MODELS[MODE][role])
 // Merge a resolved model into agent opts only when set, so `undefined` never
 // clobbers the inherited session model.
@@ -354,7 +363,7 @@ Set isReal=false ONLY if the finding is:
 - Wrong location: line references do not correspond to the described issue.
 - Speculative: predicts future problems with no concrete current impact.
 
-Severity being one level too high is NOT grounds to refute. If the design problem is real but over- or under-rated, keep isReal=true and correct it via calibratedSeverity. "Default to refuting" applies only when evidence is genuinely thin — a finding with concrete, accurate file/line evidence for a real design problem should be KEPT even if you would personally prioritize it lower. ALWAYS set calibratedSeverity to the level the evidence supports, whether or not you keep the finding.${angle}
+Severity being one level too high is NOT grounds to refute. If the design problem is real but over- or under-rated, keep isReal=true and correct it via calibratedSeverity. "Default to refuting" applies only when evidence is genuinely thin — a finding with concrete, accurate file/line evidence for a real design problem should be KEPT even if you would personally prioritize it lower. ALWAYS set calibratedSeverity to the level the evidence supports, whether or not you keep the finding.
 
 Return ONLY the structured verdict: isReal, calibratedSeverity, lineRefsAccurate, reason (one sentence naming the single decisive factor).`
 }
