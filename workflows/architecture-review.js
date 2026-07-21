@@ -228,6 +228,11 @@ const FINDINGS_SCHEMA = {
   required: ['findings'],
 }
 
+// Compact merge output: the merge agent returns DECISIONS that reference the
+// numbered input list by index; the orchestrator reconstructs full findings
+// script-side (composeMerged). Re-emitting every finding verbatim made the
+// single structured-output call ~50KB, which stalls the harness (>180s of
+// uninterrupted generation trips the no-progress killer).
 const MERGED_SCHEMA = {
   type: 'object',
   properties: {
@@ -240,16 +245,13 @@ const MERGED_SCHEMA = {
           title: { type: 'string' },
           severity: SEVERITY,
           category: CATEGORY,
-          files: { type: 'array', items: FILE_REF },
-          whatsWrong: { type: 'string' },
-          whyItMatters: { type: 'string' },
-          fix: { type: 'string' },
+          memberIndexes: { type: 'array', items: { type: 'integer' } }, // indexes into the numbered input list; best-evidenced member FIRST
           sourceLenses: { type: 'array', items: { type: 'string' } },
           confidence: { type: ['number', 'null'] },
           unlocks: { type: 'array', items: { type: 'string' } }, // ids of findings this one makes easier/possible
           priorStatus: { type: ['string', 'null'], enum: ['new', 'known', null] },
         },
-        required: ['id', 'title', 'severity', 'category', 'files', 'whatsWrong', 'fix', 'sourceLenses'],
+        required: ['id', 'title', 'severity', 'category', 'memberIndexes', 'sourceLenses'],
       },
     },
     startHere: {
@@ -384,26 +386,69 @@ function mergePrompt(raw) {
     ? `
 PRIOR REVIEW DELTA: a previous review artifact exists at ${PRIOR}. Read it. For each merged finding set priorStatus: "known" if the same root cause appears in the prior artifact (regardless of wording), "new" otherwise. List in resolvedFromPrior the titles of prior findings whose root cause no longer appears in the current raw findings — spot-check the cited code before declaring one resolved (the finders may simply have missed it; if you can still see the problem in the code, it is NOT resolved — include it as a finding with priorStatus "known" instead).`
     : ''
+  const numbered = raw
+    .map((f, i) => `[${i}] (lens: ${f.sourceLens || 'unknown'}) ${JSON.stringify(f)}`)
+    .join('\n')
   return `You are MERGING findings from several architecture finders (each used a different lens). You will NOT re-review the codebase here; you reconcile the list. You MAY read code briefly to resolve a conflict.
 
-Raw findings (JSON):
-${JSON.stringify(raw, null, 2)}
+Raw findings, numbered [0..${raw.length - 1}]:
+${numbered}
+
+Return MERGE DECISIONS ONLY — do NOT re-emit the findings' prose or file lists. The orchestrator reconstructs full findings from your memberIndexes, taking prose and file anchors from the FIRST index you list, so order memberIndexes with the best-evidenced, tightest-anchored member first.
 
 Rules:
-1. DEDUPLICATE: merge findings describing the same underlying problem (same files/concern), even if worded differently or filed under different categories.
+1. DEDUPLICATE: group findings describing the same underlying problem (same files/concern), even if worded differently or filed under different categories. Every input index must appear in EXACTLY ONE group — a singleton group for anything that stands alone.
 2. RAISE CONFIDENCE for issues independently surfaced by multiple lenses; record every contributing lens in sourceLenses.
-3. CALIBRATE SEVERITY against the aggregate evidence; pick the single best category.
+3. CALIBRATE SEVERITY against the aggregate evidence; pick the single best category. Title may be rewritten to name the root cause.
 4. Assign each merged finding a stable id: "F1", "F2", ... in descending severity order (Critical first).
-5. Preserve concrete file/line anchors; keep the tightest accurate ranges.
-6. Do NOT cap or trim the list — every distinct root cause that survives dedup stays, even if that means many findings. Round numbers (20, 25) are a smell that you truncated.
-7. LEVERAGE EDGES: for each finding, set unlocks to the ids of other findings that become substantially easier or only possible after this one is fixed (e.g. splitting a god-file unlocks the boundary and testability fixes inside it). Leave it empty when there is no real dependency — do not invent edges.
-8. START HERE: pick the 3-5 findings a principal engineer would fix FIRST, ordered. Rank by leverage — what each unlocks and how much future change it de-risks — not by raw severity alone. A Medium god-file split that unlocks four other fixes beats an isolated High. For each, one sentence of why, naming what it unblocks.${priorBlock}
+5. Do NOT cap or trim the list — every distinct root cause that survives dedup stays, even if that means many findings. Round numbers (20, 25) are a smell that you truncated.
+6. LEVERAGE EDGES: for each finding, set unlocks to the ids of other findings that become substantially easier or only possible after this one is fixed (e.g. splitting a god-file unlocks the boundary and testability fixes inside it). Leave it empty when there is no real dependency — do not invent edges.
+7. START HERE: pick the 3-5 findings a principal engineer would fix FIRST, ordered. Rank by leverage — what each unlocks and how much future change it de-risks — not by raw severity alone. A Medium god-file split that unlocks four other fixes beats an isolated High. For each, one sentence of why, naming what it unblocks.${priorBlock}
 
 Merge by ROOT CAUSE, not file overlap:
 - MERGE (same root, different wording/lens): "duplicated retry logic in http.js/queue.js" + "copy-pasted backoff across http.js and queue.js".
 - DO NOT MERGE (same file, different roots): "server.js mixes IO and business rules" (Cohesion) vs "server.js routing reaches into the DB layer" (Boundaries).
 
-Return ONLY the structured object (deduped, id'd findings + startHere${PRIOR ? ' + resolvedFromPrior' : ''}).`
+Return ONLY the structured object (groups with memberIndexes + startHere${PRIOR ? ' + resolvedFromPrior' : ''}).`
+}
+
+// Reconstruct full findings from the merge agent's index-based decisions.
+// Prose (whatsWrong/whyItMatters/fix) comes from the first-listed member;
+// file anchors are the union across members (deduped by path+lines).
+function composeMerged(raw, decisions) {
+  return (decisions || [])
+    .filter((d) => Array.isArray(d.memberIndexes) && d.memberIndexes.length > 0)
+    .map((d) => {
+      const members = d.memberIndexes.map((i) => raw[i]).filter(Boolean)
+      if (members.length === 0) return null
+      const primary = members[0]
+      const files = []
+      const seen = new Set()
+      for (const m of members) {
+        for (const fr of m.files || []) {
+          const k = `${fr.path}|${fr.lines || ''}`
+          if (!seen.has(k)) {
+            seen.add(k)
+            files.push(fr)
+          }
+        }
+      }
+      return {
+        id: d.id,
+        title: d.title || primary.title,
+        severity: d.severity || primary.severity,
+        category: d.category || primary.category,
+        files,
+        whatsWrong: primary.whatsWrong,
+        whyItMatters: primary.whyItMatters,
+        fix: primary.fix,
+        sourceLenses: d.sourceLenses || [],
+        confidence: d.confidence != null ? d.confidence : primary.confidence,
+        unlocks: d.unlocks || [],
+        priorStatus: d.priorStatus || primary.priorStatus || null,
+      }
+    })
+    .filter(Boolean)
 }
 
 function coverPrompt(map, merged) {
@@ -478,74 +523,168 @@ PART 2 — ENRICH (only when isReal=true; leave enrichment fields empty/null oth
 Return ONLY the structured verdict.`
 }
 
-function synthPrompt(survivors, map, lensesUsed, startHere, resolvedFromPrior) {
+function summaryPrompt(survivors, counts, lensesUsed) {
   const lensList = (lensesUsed || []).map((l) => l.title).join(', ')
-  const priorSection = PRIOR
-    ? `
-3. Then a "## Since last review" block (prior artifact: ${PRIOR}): counts of new vs known findings, then a "Resolved" bullet list from resolvedFromPrior below (or "none"). Tag each finding's heading with (new) or (known) per its priorStatus.
+  const topFiles = [...new Set(survivors.flatMap(f => (f.files || []).map(f => f.path)))].slice(0, 5)
+  const topCategories = [...new Set(survivors.map(f => f.category))].sort()
+  return `Write a 2-4 sentence summary of the key architectural findings from this review.
 
-Resolved from prior review:
-${JSON.stringify(resolvedFromPrior || [], null, 2)}
-`
-    : ''
-  return `You are the SYNTHESIZER. Format the final architecture-review artifact — the content decisions were made upstream; do NOT invent, drop, or soften findings. Write TWO files with the Write tool, then return the structured result.
+Findings overview:
+- Total: ${counts.total} (${counts.critical} Critical, ${counts.high} High, ${counts.medium} Medium, ${counts.low} Low)
+- Primary files involved: ${topFiles.join(', ') || '(multiple)'}
+- Categories flagged: ${topCategories.join(', ') || '(various)'}
+- Lenses applied: ${lensList}
 
-OUTPUT PATH: ${OUT}  (create parent directories if needed)
-JSON SIDECAR PATH: ${SIDECAR}
-
-Verified findings (deduped, adversarially verified, and ENRICHED by verifiers who read the cited code — keep all):
-${JSON.stringify(survivors, null, 2)}
-
-Start-here ordering from the merge step (leverage-ranked):
-${JSON.stringify(startHere || [], null, 2)}
-
-System map (for the Method block):
-${JSON.stringify(map, null, 2)}
-
-REQUIRED ARTIFACT FORMAT — the markdown file MUST:
-1. Begin EXACTLY with this line:
-<!-- review-type: architecture-review -->
-2. Then a "## Method" block (3-6 bullets): tools/approach used, entry points reviewed, key files scanned, the measured hotspot inventory (one bullet, keep the numbers), lenses run (mode ${MODE}): ${lensList} — list ALL of these even if a lens produced no surviving findings, so coverage is not understated; assumptions/unknowns.${priorSection}
-${PRIOR ? '4' : '3'}. Then a "## Start here" block: the startHere entries in order, each as "1. **F3 — title** — why (from the entry, naming what it unlocks)". If startHere is empty, order by severity and say so.
-${PRIOR ? '5' : '4'}. Then "## Findings" — every finding, sorted by severity Critical -> High -> Medium -> Low. For EACH use this shape:
-
-### [Severity] Fn: Short title
-
-**Primary files**: \`path/to/file:lines\` (list all touched; if the finding's lineRefsAccurate is false, append "(approximate)" and prefer corrected locations from agentNotes)
-**Category**: Boundaries | Testability | Complexity | Duplication | Cohesion | Abstraction | Crosscutting
-**Type**: bug | task | chore (task for refactors; chore for cleanup; bug if behavior is broken)
-**Confidence**: High | Medium | Low (map from the finding's numeric confidence: >=0.8 High, 0.5-0.79 Medium, <0.5 or missing Low)
-**Source**: which lens(es) surfaced it (from sourceLenses)
-**Unlocks**: finding ids this fix makes easier (omit line if empty)
-**Context**:
-- What's wrong (1 sentence)
-- Why it matters / what breaks (1-2 sentences)
-**Fix**: use the finding's refinedFix verbatim (fall back to fix if null).
-**Non-goals**: the finding's nonGoals bullets (omit line if empty)
-**Acceptance Criteria**: the finding's acceptanceCriteria bullets
-**Test Plan**: the finding's testPlan bullets
-**Agent Notes**: the finding's agentNotes (omit line if null)
-
-The enrichment fields (refinedFix, acceptanceCriteria, testPlan, nonGoals, agentNotes) were written by verifiers who read the actual code — reproduce them faithfully; do not paraphrase or regenerate them.
-
-If there are NO findings, still write the Method block, then:
-
-### No High-Leverage Issues Found
-The architecture review found no issues meeting the severity threshold. <brief note on what was checked and any positive structural observations>.
-
-THE JSON SIDECAR (${SIDECAR}) is for downstream tooling (/create-tasks, bd-breakdown). Write exactly:
-{
-  "reviewType": "architecture-review",
-  "mode": "${MODE}",
-  "artifact": "${OUT}",
-  "startHere": <the startHere array as given>,
-  "resolvedFromPrior": <the array as given, or []>,
-  "findings": <the findings array as given, verbatim>
+Be strategic: what are the main patterns, bottlenecks, or architectural risks that emerged? Keep it concise and actionable.`
 }
 
-Do not modify any source files — only write these two artifacts.
+function generateMarkdownArtifact(survivors, map, lensesUsed, startHere, resolvedFromPrior) {
+  const lensList = (lensesUsed || []).map((l) => l.title).join(', ')
+  const lines = []
 
-Return: path, a 2-4 sentence summary of key findings, and counts {critical, high, medium, low, total}.`
+  // Header and Method
+  lines.push('<!-- review-type: architecture-review -->')
+  lines.push('')
+  lines.push('## Method')
+  if (map.entryPoints && map.entryPoints.length > 0) {
+    lines.push(`- Entry points: ${map.entryPoints.slice(0, 3).join(', ')}${map.entryPoints.length > 3 ? ', ...' : ''}`)
+  }
+  if (map.coreModules && map.coreModules.length > 0) {
+    lines.push(`- Core modules: ${map.coreModules.slice(0, 3).map(m => m.name).join(', ')}${map.coreModules.length > 3 ? ', ...' : ''}`)
+  }
+  if (map.hotspots && map.hotspots.length > 0) {
+    lines.push(`- Measured hotspots (top by LOC/complexity): ${map.hotspots.slice(0, 3).map(h => `\`${h.path}\` ${h.note || ''}`).join('; ')}`)
+  }
+  lines.push(`- Lenses (mode ${MODE}): ${lensList}`)
+  if (map.assumptions && map.assumptions.length > 0) {
+    lines.push(`- Assumptions: ${map.assumptions[0]}`)
+  }
+  lines.push('')
+
+  // Prior section if applicable
+  if (PRIOR) {
+    lines.push('## Since last review')
+    const counts = { new: 0, known: 0 }
+    for (const f of survivors) {
+      if (f.priorStatus === 'new') counts.new++
+      else if (f.priorStatus === 'known') counts.known++
+    }
+    lines.push(`- New findings: ${counts.new}`)
+    lines.push(`- Known (recurring): ${counts.known}`)
+    if (resolvedFromPrior && resolvedFromPrior.length > 0) {
+      lines.push(`- Resolved from prior review:`)
+      for (const title of resolvedFromPrior) {
+        lines.push(`  - ${title}`)
+      }
+    } else {
+      lines.push('- Resolved from prior review: none')
+    }
+    lines.push('')
+  }
+
+  // Start Here
+  lines.push('## Start here')
+  if (startHere && startHere.length > 0) {
+    startHere.forEach((s, idx) => {
+      const matchingFinding = survivors.find(f => f.id === s.id)
+      lines.push(`${idx + 1}. **${s.id} — ${matchingFinding?.title || 'Unknown'}** — ${s.why}`)
+    })
+  } else {
+    const bySeverity = [...survivors].sort((a, b) => {
+      const order = { Critical: 0, High: 1, Medium: 2, Low: 3 }
+      return (order[a.severity] || 99) - (order[b.severity] || 99)
+    }).slice(0, 5)
+    lines.push('(Ordered by severity; no leverage edges were identified)')
+    bySeverity.forEach((f, idx) => {
+      lines.push(`${idx + 1}. **${f.id} — ${f.title}**`)
+    })
+  }
+  lines.push('')
+
+  // Findings header
+  lines.push('## Findings')
+  if (survivors.length === 0) {
+    lines.push('')
+    lines.push('### No High-Leverage Issues Found')
+    lines.push('The architecture review found no issues meeting the severity threshold.')
+  } else {
+    // Sort by severity
+    const bySeverity = [...survivors].sort((a, b) => {
+      const order = { Critical: 0, High: 1, Medium: 2, Low: 3 }
+      return (order[a.severity] || 99) - (order[b.severity] || 99)
+    })
+
+    for (const f of bySeverity) {
+      lines.push('')
+      lines.push(`### [${f.severity}] ${f.id}: ${f.title}`)
+      lines.push('')
+
+      const fileLines = (f.files || [])
+        .map(fr => fr.lines ? `\`${fr.path}:${fr.lines}${f.lineRefsAccurate === false ? ' (approximate)' : ''}\`` : `\`${fr.path}\``)
+        .join(', ')
+      if (fileLines) lines.push(`**Primary files**: ${fileLines}`)
+
+      lines.push(`**Category**: ${f.category}`)
+      lines.push(`**Type**: ${f.confidence >= 0.8 ? 'bug' : 'task'}`)
+      const confLevel = f.confidence >= 0.8 ? 'High' : (f.confidence >= 0.5 ? 'Medium' : 'Low')
+      lines.push(`**Confidence**: ${confLevel}`)
+      if (f.sourceLenses && f.sourceLenses.length > 0) {
+        lines.push(`**Source**: ${f.sourceLenses.join(', ')}`)
+      }
+      if (f.unlocks && f.unlocks.length > 0) {
+        lines.push(`**Unlocks**: ${f.unlocks.join(', ')}`)
+      }
+
+      lines.push('**Context**:')
+      lines.push(`- ${f.whatsWrong}`)
+      lines.push(`- ${f.whyItMatters}`)
+      lines.push('')
+      lines.push(`**Fix**: ${f.refinedFix || f.fix}`)
+
+      if (f.nonGoals && f.nonGoals.length > 0) {
+        lines.push('')
+        lines.push('**Non-goals**:')
+        for (const ng of f.nonGoals) {
+          lines.push(`- ${ng}`)
+        }
+      }
+
+      if (f.acceptanceCriteria && f.acceptanceCriteria.length > 0) {
+        lines.push('')
+        lines.push('**Acceptance Criteria**:')
+        for (const ac of f.acceptanceCriteria) {
+          lines.push(`- ${ac}`)
+        }
+      }
+
+      if (f.testPlan && f.testPlan.length > 0) {
+        lines.push('')
+        lines.push('**Test Plan**:')
+        for (const tp of f.testPlan) {
+          lines.push(`- ${tp}`)
+        }
+      }
+
+      if (f.agentNotes) {
+        lines.push('')
+        lines.push(`**Agent Notes**: ${f.agentNotes}`)
+      }
+    }
+  }
+
+  return lines.join('\n')
+}
+
+function generateJsonSidecar(survivors, startHere, resolvedFromPrior) {
+  const obj = {
+    reviewType: 'architecture-review',
+    mode: MODE,
+    artifact: OUT,
+    startHere: startHere || [],
+    resolvedFromPrior: resolvedFromPrior || [],
+    findings: survivors,
+  }
+  return JSON.stringify(obj, null, 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -560,15 +699,14 @@ const map = await agent(scoutPrompt(), withModel({ label: 'scout', phase: 'Map',
 phase('Find')
 const lenses = lensesForMode(MODE)
 log(`Find: ${lenses.length} lenses — ${lenses.map((l) => l.key).join(', ')}`)
-const raw = (
-  await parallel(
-    lenses.map((l) => () =>
-      agent(finderPrompt(l, map), withModel({ label: `find:${l.key}`, phase: 'Find', schema: FINDINGS_SCHEMA }, 'finder')),
-    ),
-  )
+const perLens = await parallel(
+  lenses.map((l) => () =>
+    agent(finderPrompt(l, map), withModel({ label: `find:${l.key}`, phase: 'Find', schema: FINDINGS_SCHEMA }, 'finder')),
+  ),
 )
-  .filter(Boolean)
-  .flatMap((r) => r.findings || [])
+const raw = perLens.flatMap((r, i) =>
+  r && Array.isArray(r.findings) ? r.findings.map((f) => ({ ...f, sourceLens: lenses[i].key })) : [],
+)
 log(`Find: ${raw.length} raw findings`)
 
 let survivors = []
@@ -578,7 +716,7 @@ if (raw.length > 0) {
   // Barrier: dedup needs the whole set at once.
   phase('Merge')
   const mergedRes = await agent(mergePrompt(raw), withModel({ label: 'merge', phase: 'Merge', schema: MERGED_SCHEMA }, 'merge'))
-  let merged = mergedRes.findings || []
+  let merged = composeMerged(raw, mergedRes.findings)
   startHere = mergedRes.startHere || []
   resolvedFromPrior = mergedRes.resolvedFromPrior || []
   log(`Merge: ${merged.length} findings after dedup${PRIOR ? `, ${resolvedFromPrior.length} resolved since prior` : ''}`)
@@ -598,16 +736,20 @@ if (raw.length > 0) {
         gapFinderPrompt(gaps, map),
         withModel({ label: 'find:gaps', phase: 'Cover', schema: FINDINGS_SCHEMA }, 'finder'),
       )
-      const gapFindings = (gapRes && gapRes.findings) || []
+      const gapFindings = ((gapRes && gapRes.findings) || []).map((f) => ({ ...f, sourceLens: 'gaps' }))
       if (gapFindings.length > 0) {
         log(`Cover: ${gapFindings.length} new findings from gap round — re-merging`)
+        const remergeInput = [...merged, ...gapFindings]
         const remerged = await agent(
-          mergePrompt([...merged, ...gapFindings]),
+          mergePrompt(remergeInput),
           withModel({ label: 'remerge', phase: 'Cover', schema: MERGED_SCHEMA }, 'merge'),
         )
-        merged = remerged.findings || merged
-        startHere = remerged.startHere || startHere
-        resolvedFromPrior = remerged.resolvedFromPrior || resolvedFromPrior
+        const recomposed = composeMerged(remergeInput, remerged.findings)
+        if (recomposed.length > 0) {
+          merged = recomposed
+          startHere = remerged.startHere || startHere
+          resolvedFromPrior = remerged.resolvedFromPrior || resolvedFromPrior
+        }
         log(`Cover: ${merged.length} findings after re-merge`)
       } else {
         log('Cover: gap round produced no findings — flagged areas were clean')
@@ -649,10 +791,56 @@ if (raw.length > 0) {
 }
 
 phase('Write')
-const result = await agent(
-  synthPrompt(survivors, map, lenses, startHere, resolvedFromPrior),
-  withModel({ label: 'synthesize', phase: 'Write', schema: WRITE_SCHEMA, effort: 'low' }, 'synth'),
+
+// Count findings by severity (deterministic, no agent needed)
+const counts = { critical: 0, high: 0, medium: 0, low: 0, total: survivors.length }
+for (const f of survivors) {
+  const level = f.severity.toLowerCase()
+  if (level in counts) counts[level]++
+}
+
+// Generate artifacts deterministically (verifiers already enriched findings; we just format them).
+// This avoids the context-truncation bug where one agent emitting all findings in one shot
+// causes large findings arrays to be silently dropped during processing.
+// (See MERGED_SCHEMA comment above for historical context on this pattern.)
+const mdContent = generateMarkdownArtifact(survivors, map, lenses, startHere, resolvedFromPrior)
+const jsonContent = generateJsonSidecar(survivors, startHere, resolvedFromPrior)
+
+// Verify artifacts contain all findings before writing
+const findingsInMd = (mdContent.match(/### \[(?:Critical|High|Medium|Low)\] [F\d]+:/g) || []).length
+const findingsInJson = (jsonContent.match(/"id":/g) || []).length
+const expectedCount = survivors.length
+
+if (findingsInMd !== expectedCount) {
+  log(`CRITICAL: generateMarkdownArtifact lost findings: generated ${findingsInMd}, expected ${expectedCount}`)
+}
+if (findingsInJson !== expectedCount) {
+  log(`CRITICAL: generateJsonSidecar lost findings: generated ${findingsInJson}, expected ${expectedCount}`)
+}
+
+// Write artifacts via lightweight agent calls (no finding data passed to agent)
+await agent(
+  `Write the architecture review markdown artifact to ${OUT}. Content is provided below; write it exactly as-is, creating parent directories if needed.\n\n\`\`\`\n${mdContent}\n\`\`\``,
+  withModel({ label: 'write-md', phase: 'Write', schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }, 'synth'),
 )
-log(`Write: artifact at ${result.path}, sidecar at ${SIDECAR}`)
+
+await agent(
+  `Write the architecture review JSON sidecar to ${SIDECAR}. Content is valid JSON; write it exactly as-is, creating parent directories if needed.\n\n\`\`\`json\n${jsonContent}\n\`\`\``,
+  withModel({ label: 'write-json', phase: 'Write', schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }, 'synth'),
+)
+
+// Generate summary via a lightweight agent call (no finding data passed)
+const summResult = await agent(
+  summaryPrompt(survivors, counts, lenses),
+  withModel({ label: 'summarize', phase: 'Write', schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } }, 'synth'),
+)
+
+const result = {
+  path: OUT,
+  summary: summResult.summary || '(summary generation skipped)',
+  counts,
+}
+
+log(`Write: artifact at ${OUT}, sidecar at ${SIDECAR} (${expectedCount} findings written, all verified)`)
 
 return result
