@@ -64,12 +64,23 @@ const withModel = (opts, role) => {
 
 const focusLine = FOCUS ? `\n\nFOCUS: pay special attention to: ${FOCUS}` : ''
 
+const STE100 = `ARTIFACT LANGUAGE
+- Write all generated prose in ASD-STE100 Simplified Technical English.
+- Use short, declarative sentences and active voice.
+- Give one instruction or condition in each sentence.
+- Use approved ASD-STE100 words when possible.
+- Keep code identifiers, file paths, command names, API names, and exact quotations unchanged.
+- If a necessary technical term is not approved terminology, define it at its first use.
+- Before you return the structured object, check every prose field for compliance with these rules.`
+
 // ---------------------------------------------------------------------------
 // Shared review doctrine (distilled from the cerberus architecture-review
 // generator + reviewer prompts). Kept identical across finders so lenses stay
 // comparable; each lens then narrows the "What to look for" section.
 // ---------------------------------------------------------------------------
 const DOCTRINE = `You are performing a PRINCIPAL-ENGINEER architecture review focused on HIGH-LEVERAGE design improvements — maximum long-term payoff per hour invested. Prefer functional patterns (pure functions, explicit data flow, composition) unless the code clearly benefits from OO.
+
+${STE100}
 
 This is NOT a correctness bug hunt and NOT a style/lint pass. Only flag correctness issues if they block architectural change or reveal systemic design flaws.
 
@@ -391,6 +402,8 @@ PRIOR REVIEW DELTA: a previous review artifact exists at ${PRIOR}. Read it. For 
     .join('\n')
   return `You are MERGING findings from several architecture finders (each used a different lens). You will NOT re-review the codebase here; you reconcile the list. You MAY read code briefly to resolve a conflict.
 
+${STE100}
+
 Raw findings, numbered [0..${raw.length - 1}]:
 ${numbered}
 
@@ -454,6 +467,8 @@ function composeMerged(raw, decisions) {
 function coverPrompt(map, merged) {
   return `You are the COMPLETENESS CRITIC for an architecture review. The finders have reported; your job is to name what they MISSED — not to re-review everything.
 
+${STE100}
+
 READ-ONLY. You may briefly inspect files to decide whether an unexamined area is actually suspicious.
 
 System map (with measured hotspot inventory):
@@ -495,6 +510,8 @@ Return ONLY the structured object.`
 function verifyPrompt(finding) {
   return `You are VERIFYING AND ENRICHING one architecture-review finding. You are the only agent in this pipeline that reads the cited code closely — the final artifact's acceptance criteria and test plan come from YOU, not from someone summarizing JSON. Two jobs: (1) check the claim against the code, (2) if it holds, specify the fix precisely enough to hand to an implementing agent.
 
+${STE100}
+
 READ-ONLY. Read the referenced files at the cited lines and check the claim.
 
 Finding:
@@ -528,6 +545,8 @@ function summaryPrompt(survivors, counts, lensesUsed) {
   const topFiles = [...new Set(survivors.flatMap(f => (f.files || []).map(f => f.path)))].slice(0, 5)
   const topCategories = [...new Set(survivors.map(f => f.category))].sort()
   return `Write a 2-4 sentence summary of the key architectural findings from this review.
+
+${STE100}
 
 Findings overview:
 - Total: ${counts.total} (${counts.critical} Critical, ${counts.high} High, ${counts.medium} Medium, ${counts.low} Low)
@@ -820,7 +839,7 @@ if (findingsInJson !== expectedCount) {
 
 // Write artifacts via lightweight agent calls (no finding data passed to agent)
 await agent(
-  `Write the architecture review markdown artifact to ${OUT}. Content is provided below; write it exactly as-is, creating parent directories if needed.\n\n\`\`\`\n${mdContent}\n\`\`\``,
+  `Write the architecture review markdown artifact to ${OUT}. The content must use ASD-STE100 Simplified Technical English. Content is provided below; write it exactly as-is, creating parent directories if needed.\n\n\`\`\`\n${mdContent}\n\`\`\``,
   withModel({ label: 'write-md', phase: 'Write', schema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }, 'synth'),
 )
 

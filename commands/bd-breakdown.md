@@ -18,6 +18,17 @@ If input is missing critical context (scope, expected behavior, or affected area
 Use the **beads skill** for this task. Produce bd-ready issues and dependency links.  
 Execute the `bd` commands to create issues and dependencies (don’t just print them).
 
+## Language Requirement
+
+Write all issue titles and descriptions in ASD-STE100 Simplified Technical English. This requirement applies to the issue specifications, acceptance criteria, test plans, notes, and text passed to `bd` commands.
+
+- Use short, declarative sentences and active voice.
+- Give one instruction or condition in each sentence.
+- Use approved ASD-STE100 words when possible.
+- Keep code identifiers, file paths, command names, API names, and exact quotations unchanged.
+- If a necessary technical term is not approved terminology, define it at its first use.
+- Before you create the issues, check all generated prose for compliance with these rules.
+
 ## De-duplication Requirement (Read Existing Issues First)
 
 - **First, read open issues** in Beads before creating anything. Use `bd list --status open` (and also check `in_progress`/`blocked` if needed) to see what already exists.

@@ -12,6 +12,17 @@ Local-first issue tracker. SQLite for queries, JSONL for git sync.
 
 **br never runs git.** After `br sync --flush-only`, you must `git add .beads/ && git commit`.
 
+## Language Requirement
+
+Write all issue titles and descriptions in ASD-STE100 Simplified Technical English. This requirement applies when you create, update, split, merge, or groom an issue.
+
+- Use short, declarative sentences and active voice.
+- Give one instruction or condition in each sentence.
+- Use approved ASD-STE100 words when possible.
+- Keep code identifiers, file paths, command names, API names, and exact quotations unchanged.
+- If a necessary technical term is not approved terminology, define it at its first use.
+- Before you run a create or update command, check all generated prose for compliance with these rules.
+
 ---
 
 ## Quick Reference

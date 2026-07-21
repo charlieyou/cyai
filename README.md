@@ -45,8 +45,6 @@ Front-end Design skill from: https://www.justinwetch.com/blog/improvingclaudefro
 | Command | Description |
 |---------|-------------|
 | `bd-breakdown` | Convert a review or feature plan into small, parallelizable Beads issues |
-| `diary` | Create a structured diary entry from the current session |
-| `reflect` | Analyze diary entries to identify patterns and propose AGENTS.md updates |
 
 ## Prompts
 
