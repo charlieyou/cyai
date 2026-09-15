@@ -289,6 +289,26 @@ for plugin_file in "$SCRIPT_DIR"/plugins/amp/*.ts; do
     amp_plugins+=("${plugin_name%.ts}")
 done
 
+for plugin_dir in "$SCRIPT_DIR"/plugins/amp/*/; do
+    [[ ! -f "$plugin_dir/index.ts" ]] && continue
+    plugin_name="$(basename "$plugin_dir")"
+
+    target="$AMP_PLUGINS/$plugin_name"
+    if [[ -L "$target" ]]; then
+        if [[ "$(readlink "$target")" == "$SCRIPT_DIR"/* ]]; then
+            rm "$target"
+        else
+            echo "Warning: $target is a symlink to another location, skipping"
+            continue
+        fi
+    elif [[ -e "$target" ]]; then
+        echo "Warning: $target exists and is not a symlink, skipping"
+        continue
+    fi
+    ln -s "$plugin_dir" "$target"
+    amp_plugins+=("$plugin_name")
+done
+
 echo "Linked ${#skills[@]} skills: ${skills[*]}"
 echo "Linked ${#commands[@]} commands: ${commands[*]}"
 echo "Linked ${#agents[@]} agents: ${agents[*]}"

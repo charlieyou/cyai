@@ -20,6 +20,7 @@ The script is idempotent and can be run multiple times safely.
 
 | Plugin | Description |
 |--------|-------------|
+| `monitors` | Runs event-driven shell monitors whose stdout wakes the owning Amp thread |
 | `safety-net` | Prompts for confirmation before dangerous shell commands (rm -rf, git reset --hard, etc.) |
 | `tmux-context-notifications` | Sends Amp completion notifications with tmux session/window/pane context via Ghostty/macOS alerts |
 
