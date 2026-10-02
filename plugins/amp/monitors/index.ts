@@ -46,7 +46,7 @@ export default function (amp: PluginAPI) {
 
 	amp.registerTool({
 		name: 'monitor_start',
-		description: 'Start an explicitly user-requested shell monitor. Each stdout line sends an event to this thread; silent watchers use no model calls. Filter output (e.g. grep --line-buffered); never stream raw logs or secrets. Commands run directly with executor permissions, without a plugin confirmation dialog. Prefer built-in schedules for periodic checks and services for dev servers; use this for live event streams. No persistence across plugin/executor restarts. Do not repeatedly poll monitor_list.',
+		description: 'Watch a long-running process or log for events while you keep working. Each stdout line is delivered to this thread as a message; silent watchers cost nothing. Use this on your own initiative, without being asked, when you (1) start a dev server or service and want its error lines surfaced while you test against it, (2) launch a build, test run, or deploy that takes more than about a minute and want to continue other work instead of blocking on shell_command_status, or (3) need to react to a file, log, or event stream. Not for one-shot commands or periodic checks (use schedules). Filter at the source with line-buffered tools (e.g. tail -F log | grep --line-buffered -E "ERROR|FATAL"); never stream raw logs or secrets. Commands run directly with executor permissions, without a confirmation dialog. No persistence across plugin/executor restarts. Stop with monitor_stop when the goal is reached; do not poll monitor_list.',
 		inputSchema: {
 			type: 'object', additionalProperties: false,
 			properties: {

@@ -5,7 +5,10 @@ No dependencies; requires Bun (Amp's plugin runtime), bash, and Linux/macOS.
 
 ## Usage
 
-Ask Amp: “Monitor `app.log` for errors for five minutes.” Amp calls:
+The agent is expected to start monitors on its own initiative: after starting a dev server
+it wants error lines from, when kicking off a build or test run it would otherwise block on,
+or when it needs to react to a log or event stream. You can also ask directly:
+“Monitor `app.log` for errors for five minutes.” Either way, Amp calls:
 
 ```json
 {
