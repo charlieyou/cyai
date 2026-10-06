@@ -15,6 +15,8 @@ export type Outgoing = { ok: boolean; text: string; posted?: boolean }
 export type Session = {
 	issue: string
 	issueId?: string
+	/** Linear's suggested git branch for the issue; PRs from it are linked to the issue. */
+	branch?: string
 	sources: (string | undefined)[]
 	prompt: string
 	mode?: string
@@ -83,6 +85,8 @@ export interface Linear {
 	addURLs(sessionId: string, urls: { label: string; url: string }[]): Promise<void>
 	/** Rank candidate `owner/name` repositories for an issue. */
 	suggest(issueId: string, sessionId: string, repos: string[]): Promise<{ repo: string; confidence: number }[]>
+	/** The issue's suggested git branch name. */
+	branchName(issueId: string): Promise<string>
 }
 
 export type RelayOptions = {
@@ -142,7 +146,7 @@ export function createRelay(o: RelayOptions) {
 		await quietly('activity', () => linear.activity(id, { type: 'thought', body: `Using \`${label(project)}\` (from ${how}). Starting an Amp orb…` }))
 		let threadID: string
 		try {
-			threadID = await amp.createThread({ project: project.ref, prompt: threadPrompt(project, s.prompt), title: s.issue, mode: s.mode })
+			threadID = await amp.createThread({ project: project.ref, prompt: threadPrompt(project, s.prompt, s.branch), title: s.issue, mode: s.mode })
 		} catch (e) {
 			touch(s, { status: 'failed' })
 			await quietly('save', save)
@@ -209,6 +213,7 @@ export function createRelay(o: RelayOptions) {
 		}
 		try {
 			await linear.activity(session.id, { type: 'thought', body: 'Choosing an Amp project for this issue…' })
+			if (issue?.id) state.sessions[session.id].branch = await linear.branchName(issue.id).catch(e => (log('branch name failed', e), undefined))
 			await chooseProject(session.id)
 		} catch (e) {
 			touch(state.sessions[session.id], { status: 'failed' })

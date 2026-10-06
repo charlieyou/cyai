@@ -98,6 +98,7 @@ const linear: Linear = {
 	},
 	addURLs: async (...args) => { calls.push({ fn: 'addURLs', args }) },
 	suggest: async (...args) => { calls.push({ fn: 'suggest', args }); return suggestions },
+	branchName: async id => { if (failing.has('branch')) throw new Error('no'); return `amp/${id}-fix-it` },
 }
 const makeRelay = () => createRelay({
 	amp, linear, state, webhookSecret: SECRET, log() {}, now: () => clock, multiplayer: true,
@@ -193,6 +194,8 @@ test('delegation with [repo=...] starts a thread and posts each reply once', asy
 	const create = calls.find(c => c.fn === 'createThread')!.args[0]
 	expect(create).toMatchObject({ project: 'me/poker', title: 'ENG-1: Fix it', mode: 'high' })
 	expect(create.prompt).toContain('<issue>Fix the bug')
+	expect(create.prompt).toContain('on the branch `amp/issue-s1-fix-it`')
+	expect(create.prompt).toContain('gh pr create --draft')
 	expect(calls.find(c => c.fn === 'addURLs')!.args[1]).toEqual([{ label: 'Amp thread', url: 'https://ampcode.com/threads/T-1' }])
 	expect(calls.find(c => c.fn === 'enableMultiplayer')!.args).toEqual(['T-1'])
 
@@ -419,4 +422,12 @@ test('a follow-up that never lands stops polling after an hour', async () => {
 	await relay.tick()
 	expect(state.sessions.s1.status).toBe('idle')
 	expect(responses()).toEqual(['first'])
+})
+
+test('without a branch name the prompt still asks for a draft PR named after the issue', async () => {
+	failing.add('branch')
+	await deliver(created('s1', '[repo=poker]'))
+	const prompt = calls.find(c => c.fn === 'createThread')!.args[0].prompt
+	expect(prompt).not.toContain('on the branch')
+	expect(prompt).toContain('includes the Linear issue identifier')
 })

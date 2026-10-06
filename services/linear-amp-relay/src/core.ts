@@ -117,7 +117,10 @@ export function pullRequestURLs(text: string): string[] {
 	return [...new Set(text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g) ?? [])]
 }
 
-export function threadPrompt(project: Project, context: string): string {
+export function threadPrompt(project: Project, context: string, branch?: string): string {
+	const branchRule = branch
+		? `- When you change code, do it on the branch \`${branch}\` (check it out if it exists, otherwise create it from the default branch). When the work is done, commit, push the branch, and open a draft pull request for it with \`gh pr create --draft\` unless one is already open. Push later changes to the same branch and PR. Linear links the PR to the issue through this branch name. Do not open a PR if you changed nothing.`
+		: '- When you change code, commit on a new branch whose name includes the Linear issue identifier, push it, and open a draft pull request with `gh pr create --draft` unless one is already open. Do not open a PR if you changed nothing.'
 	return [
 		`A Linear issue was delegated to you through the Amp Linear agent. You are in the \`${project.repo ?? project.ref}\` repository.`,
 		'',
@@ -126,6 +129,7 @@ export function threadPrompt(project: Project, context: string): string {
 		context,
 		'',
 		'Notes:',
+		branchRule,
 		'- Your final message of each turn is posted verbatim to Linear as the agent response. End every turn with a concise Markdown summary of what you did, or with a clear question when you need input.',
 		'- Include the URL of any pull request you open.',
 		'- Follow-up messages from Linear arrive in this thread.',

@@ -123,6 +123,10 @@ export function linearClient(clientID: string, clientSecret: string, state: { to
 				{ id, input: { addedExternalUrls: urls } })
 			if (!data.agentSessionUpdate.success) throw new Error('Linear: agentSessionUpdate was not successful')
 		},
+		async branchName(id) {
+			const data = await gql<{ issue: { branchName: string } }>('query($id: String!) { issue(id: $id) { branchName } }', { id })
+			return data.issue.branchName
+		},
 		async suggest(issueId, agentSessionId, repos) {
 			if (!repos.length) return []
 			const data = await gql<{ issueRepositorySuggestions: { suggestions: { repositoryFullName: string; confidence: number }[] } }>(
