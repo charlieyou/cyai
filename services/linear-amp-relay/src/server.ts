@@ -73,6 +73,7 @@ export function cliAmp(bin = 'amp', ampURL = 'https://ampcode.com'): Amp {
 		send: async (threadID, message) => { await deliver(['threads', 'continue', threadID, '--orb-execute', '--execute', message]) },
 		messages: async threadID => (JSON.parse(await run(['threads', 'export', threadID])) as { messages: ExportedMessage[] }).messages,
 		archive: async threadID => { await run(['threads', 'archive', threadID]) },
+		enableMultiplayer: async threadID => { await run(['threads', 'share', 'multiplayer', 'on', threadID]) },
 		threadURL: threadID => new URL(`/threads/${threadID}`, ampURL).toString(),
 	}
 }
@@ -165,6 +166,7 @@ if (import.meta.main) {
 		webhookSecret: required('LINEAR_WEBHOOK_SECRET'),
 		defaultProject: process.env.LINEAR_AGENT_DEFAULT_PROJECT,
 		defaultMode: process.env.LINEAR_AGENT_MODE,
+		multiplayer: process.env.AMP_MULTIPLAYER !== 'false',
 	})
 	await relay.recover()
 

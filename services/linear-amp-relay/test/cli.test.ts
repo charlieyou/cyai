@@ -12,7 +12,7 @@ printf '%s\\0' "$@" > "${dir}/args"
 case "$1 $2" in
   "projects list") echo '[{"namespace":"me","name":"poker","repositoryURL":"https://github.com/charlieyou/poker"}]' ;;
   "threads export") echo '{"messages":[{"role":"user","content":[]}]}' ;;
-  "threads archive") ;;
+  "threads archive"|"threads share") ;;
   "threads continue"|--orb-execute*)
     echo '{"type":"system","subtype":"init","session_id":"T-abc"}'
     echo '{"type":"user","message":{}}'
@@ -42,6 +42,8 @@ test('projects, export, archive, URLs', async () => {
 	expect(await amp.messages('T-abc')).toEqual([{ role: 'user', content: [] }])
 	await amp.archive('T-abc')
 	expect(args()).toEqual(['threads', 'archive', 'T-abc'])
+	await amp.enableMultiplayer('T-abc')
+	expect(args()).toEqual(['threads', 'share', 'multiplayer', 'on', 'T-abc'])
 	expect(amp.threadURL('T-abc')).toBe('https://ampcode.com/threads/T-abc')
 })
 

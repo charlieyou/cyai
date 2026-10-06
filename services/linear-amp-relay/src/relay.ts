@@ -73,6 +73,8 @@ export interface Amp {
 	send(threadID: string, message: string): Promise<void>
 	messages(threadID: string): Promise<ExportedMessage[]>
 	archive(threadID: string): Promise<void>
+	/** Let workspace members contribute to the thread (Amp multiplayer, at most 7 days). */
+	enableMultiplayer(threadID: string): Promise<void>
 	threadURL(threadID: string): string
 }
 
@@ -92,6 +94,8 @@ export type RelayOptions = {
 	webhookSecret: string
 	defaultProject?: string
 	defaultMode?: string
+	/** Turn on multiplayer ("Contribute") for new threads. */
+	multiplayer?: boolean
 	log?(...args: unknown[]): void
 	now?(): number
 }
@@ -147,6 +151,7 @@ export function createRelay(o: RelayOptions) {
 		}
 		touch(s, { threadID, status: 'running', reported: 0, inflight: [], inflightBase: 0 })
 		await quietly('save', save)
+		if (o.multiplayer) await quietly('multiplayer', () => amp.enableMultiplayer(threadID))
 		await quietly('session URL', () => linear.addURLs(id, [{ label: 'Amp thread', url: amp.threadURL(threadID) }]))
 	}
 

@@ -88,6 +88,7 @@ const amp: Amp = {
 	},
 	messages: async () => transcript,
 	archive: async id => { calls.push({ fn: 'archive', args: [id] }) },
+	enableMultiplayer: async id => { calls.push({ fn: 'enableMultiplayer', args: [id] }) },
 	threadURL: id => `https://ampcode.com/threads/${id}`,
 }
 const linear: Linear = {
@@ -99,7 +100,7 @@ const linear: Linear = {
 	suggest: async (...args) => { calls.push({ fn: 'suggest', args }); return suggestions },
 }
 const makeRelay = () => createRelay({
-	amp, linear, state, webhookSecret: SECRET, log() {}, now: () => clock,
+	amp, linear, state, webhookSecret: SECRET, log() {}, now: () => clock, multiplayer: true,
 	save: async () => {
 		const gate = saveGate
 		if (gate) await gate
@@ -193,6 +194,7 @@ test('delegation with [repo=...] starts a thread and posts each reply once', asy
 	expect(create).toMatchObject({ project: 'me/poker', title: 'ENG-1: Fix it', mode: 'high' })
 	expect(create.prompt).toContain('<issue>Fix the bug')
 	expect(calls.find(c => c.fn === 'addURLs')!.args[1]).toEqual([{ label: 'Amp thread', url: 'https://ampcode.com/threads/T-1' }])
+	expect(calls.find(c => c.fn === 'enableMultiplayer')!.args).toEqual(['T-1'])
 
 	await relay.tick()
 	expect(responses()).toEqual([])

@@ -57,7 +57,9 @@ fly deploy
   - Copy the client ID, client secret and webhook signing secret into the Fly secrets above.
 - **Install:** the relay requests an `app` actor token with `client_credentials`, using the scopes `read,write,app:assignable,app:mentionable`. Manage the agent's team access on the app's page in Linear.
 
-Optional env: `LINEAR_AGENT_DEFAULT_PROJECT`, `LINEAR_AGENT_MODE`, `POLL_MS` (default 20000).
+Optional env: `LINEAR_AGENT_DEFAULT_PROJECT`, `LINEAR_AGENT_MODE`, `POLL_MS` (default 20000),
+`AMP_MULTIPLAYER=false` to stop turning on multiplayer ("Contribute") for new threads. Multiplayer lasts
+7 days and gives workspace members access to the thread's orb, secrets, files, and terminal.
 State (sessions, token) lives in `/data/state.json` on the volume. Run exactly one machine.
 
 ## Develop
