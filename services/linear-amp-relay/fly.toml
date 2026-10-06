@@ -1,0 +1,32 @@
+# Deployed from this directory: fly deploy
+app = "cyou-linear-amp-relay"
+primary_region = "iad"
+
+[build]
+
+[env]
+  PORT = "8080"
+  STATE_FILE = "/data/state.json"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # The relay polls running Amp threads, so keep one machine up.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "30s"
+    method = "GET"
+    path = "/healthz"
+    timeout = "5s"
+
+[[mounts]]
+  source = "relay_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -26,6 +26,12 @@ The script is idempotent and can be run multiple times safely.
 
 Plugins are symlinked to `~/.config/amp/plugins/` by `link-all.sh`. Run Amp with `PLUGINS=all amp` to enable.
 
+## Services
+
+| Service | Description |
+|---------|-------------|
+| [`linear-amp-relay`](services/linear-amp-relay/README.md) | Linear agent: delegating or @mentioning an issue starts an Amp orb thread in the right project |
+
 ## Skills
 
 | Skill | Description |
