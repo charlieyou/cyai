@@ -98,6 +98,16 @@ describe('shell guard', () => {
 		`git push origin HEAD:swarm-wip/${RUN}/${OTHER}`,
 		`git push origin HEAD:swarm/${RUN}x`,
 		`git push origin HEAD:refs/heads/swarm/${RUN}/extra`,
+		'git -C "/work/repo" push origin main',
+		`git push origin HEAD:swarm/${RUN} "HEAD:main"`,
+		'if gh pr view; then echo found; fi',
+		'if ! git push origin main; then echo failed; fi',
+		`git push --follow-tags origin HEAD:swarm/${RUN}`,
+		'echo "token: $(gh auth token)"',
+		"bash -lc 'git push origin main'",
+		'eval "gh pr list"',
+		"# it's late\ngit push origin main",
+		"cat > notes.txt <<'EOF'\ndon't push\nEOF\ngit push origin main",
 	])('rejects %s', async (command) => {
 		expect(await sh(command)).toBe('reject-and-continue')
 	})
@@ -117,6 +127,13 @@ describe('shell guard', () => {
 		`git push origin HEAD:swarm-wip/${RUN}/${ME}`,
 		`git push origin HEAD:refs/heads/swarm-wip/${RUN}/${ME}`,
 		'git pull --rebase origin main',
+		`git push origin "HEAD:swarm/${RUN}"`,
+		'git commit -m "amp plugin fix: gh token handling"',
+		"echo 'gh pr create' > notes.txt",
+		'git commit -m "$(cat msg.txt)"',
+		'cat > notes.md <<EOF\ngh pr create\namp threads list\nEOF',
+		'bash scripts/build.sh',
+		`for i in 1 2 3; do git pull --rebase origin swarm/${RUN} && git push origin HEAD:swarm/${RUN} && break; done`,
 	])('allows %s', async (command) => {
 		expect(await sh(command)).toBe('allow')
 	})
@@ -156,6 +173,8 @@ describe('edit guard', () => {
 		[`${ROOT}/pkg/sub/AGENTS.md`, 'reject-and-continue'],
 		[`${ROOT}/docs/decisions/0001.md`, 'reject-and-continue'],
 		[`${ROOT}/src/../Docs/Decisions/0001.md`, 'reject-and-continue'],
+		['/home/user/.config/amp/AGENTS.md', 'reject-and-continue'],
+		[`${ROOT}/../Agents.MD`, 'reject-and-continue'],
 	])('worker %s → %s', async (path, action) => {
 		expect(await edit(WORKER, path)).toBe(action)
 	})

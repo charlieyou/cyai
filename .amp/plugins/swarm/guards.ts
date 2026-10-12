@@ -38,48 +38,130 @@ function editViolation(role: Role, root: string, path: string): string | null {
 	if (role === PLANNER) {
 		return !outside && rel.startsWith('docs/') ? null : `planners may only write under docs/ (${path})`
 	}
-	if (outside) return null
 	const lower = rel.toLowerCase()
 	const protectedPath =
-		/^(\.amp|\.agents)(\/|$)/.test(lower) || /(^|\/)agents\.md$/.test(lower) || lower.startsWith('docs/decisions/')
+		/(^|\/)agents\.md$/.test(lower) ||
+		(!outside && (/^(\.amp|\.agents)(\/|$)/.test(lower) || lower.startsWith('docs/decisions/')))
 	return protectedPath ? `workers may not modify control-plane files or decisions (${rel})` : null
 }
 
 // ---------------------------------------------------------------------------------------------
 // Shell guard (invariant 6).
 
-/** Words that run their arguments as a command; their options and durations are skipped too. */
-const WRAPPERS = new Set(['sudo', 'env', 'command', 'builtin', 'exec', 'eval', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'stdbuf', 'bash', 'sh', 'zsh'])
+/** Words that run the rest of their simple command: wrappers and shell keywords. */
+const PREFIXES = new Set(['sudo', 'env', 'command', 'builtin', 'exec', 'nohup', 'time', 'nice', 'timeout', 'xargs', 'stdbuf', 'if', 'then', 'else', 'elif', 'while', 'until', 'do', '!', '{'])
+/** Commands whose argument is itself a shell line (`bash -c '...'`, `eval ...`). */
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'eval'])
 /** git global options that take a separate value: `git -C dir push`. */
 const GIT_OPTS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'])
 
 /**
- * Simple commands of a shell line as word lists. Quotes, subshells, command substitution, and
- * every control operator split commands, so `bash -c "gh ..."` and `$(gh ...)` expose `gh` as a
- * command word (a quoted string that happens to start with `amp`/`gh` is rejected too; that is
- * the conservative side). Redirections and their targets are dropped.
+ * Simple commands of a shell line as word lists, from a small quote-aware scanner: quotes join
+ * words as the shell does, control operators and newlines end a command, redirections and their
+ * targets are dropped, here-doc bodies are skipped, and the payloads of `$(...)` and backticks
+ * are scanned as commands of their own.
  */
-function simpleCommands(command: string): string[][] {
-	const text = command
-		.replace(/\\\n/g, ' ')
-		.replace(/\d*[<>]+&(\d+|-)?/g, ' ') // 2>&1, >&2, <&-
-		.replace(/&>>?/g, ' > ') // &> file
-		.replace(/\d*[<>]+\s*[^\s;&|()<>`"']*/g, ' ') // > file, 2>/dev/null, < in, <<EOF
-	return text
-		.split(/[;&|(){}\n`"']/)
-		.map((segment) => segment.trim().split(/\s+/).filter(Boolean))
-		.filter((words) => words.length > 0)
+function simpleCommands(src: string): string[][] {
+	const commands: string[][] = []
+	const heredocs: string[] = []
+	let words: string[] = []
+	let word: string | null = null
+	let target: 'file' | 'heredoc' | null = null // what the next word is, after a redirection
+	const add = (text: string) => (word = (word ?? '') + text)
+	const endWord = () => {
+		if (word !== null && target === 'heredoc') heredocs.push(word.replace(/^-/, ''))
+		else if (word !== null && !target) words.push(word)
+		if (word !== null) target = null
+		word = null
+	}
+	const endCommand = () => {
+		endWord()
+		target = null
+		if (words.length) commands.push(words)
+		words = []
+	}
+	const substitute = (from: number, to: number) => {
+		commands.push(...simpleCommands(src.slice(from, to)))
+		add('$')
+	}
+
+	for (let i = 0; i < src.length; i++) {
+		const c = src[i]!
+		if (c === '\\') {
+			if (src[i + 1] !== '\n') add(src[i + 1] ?? '')
+			i++
+		} else if (c === "'") {
+			const end = closing(src, i, "'")
+			add(src.slice(i + 1, end))
+			i = end
+		} else if (c === '"') {
+			add('')
+			for (i++; i < src.length && src[i] !== '"'; i++) {
+				if (src[i] === '\\') add(src[++i] ?? '')
+				else if (src[i] === '`') substitute(i + 1, (i = closing(src, i, '`')))
+				else if (src.startsWith('$(', i)) substitute(i + 2, (i = closingParen(src, i + 1)))
+				else add(src[i]!)
+			}
+		} else if (c === '`') {
+			substitute(i + 1, (i = closing(src, i, '`')))
+		} else if (src.startsWith('$(', i)) {
+			substitute(i + 2, (i = closingParen(src, i + 1)))
+		} else if (c === '<' || c === '>' || src.startsWith('&>', i)) {
+			if (word !== null && /^\d+$/.test(word)) word = null // the fd in 2>file
+			endWord()
+			let op = c
+			while ('<>&'.includes(src[i + 1] ?? '_')) op += src[++i]
+			if (op.endsWith('&')) while (/[\d-]/.test(src[i + 1] ?? '')) i++ // 2>&1, >&-: no target
+			else target = op === '<<' ? 'heredoc' : 'file'
+		} else if (c === '\n') {
+			endCommand()
+			let pos = i + 1
+			for (const delim of heredocs.splice(0)) {
+				for (;;) {
+					const nl = src.indexOf('\n', pos)
+					const line = src.slice(pos, nl < 0 ? src.length : nl)
+					pos = nl < 0 ? src.length : nl + 1
+					if (nl < 0 || line.replace(/^\t+/, '') === delim) break
+				}
+			}
+			i = pos - 1
+		} else if (';&|()'.includes(c)) {
+			endCommand()
+		} else if (c === '#' && word === null) {
+			i = closing(src, i, '\n') - 1 // a comment; its apostrophes must not open a quote
+		} else if (c === ' ' || c === '\t') {
+			endWord()
+		} else {
+			add(c)
+		}
+	}
+	endCommand()
+	return commands
 }
 
-/** The command word and its arguments, skipping env assignments and wrapper commands. */
+const closing = (src: string, open: number, quote: string) => {
+	const end = src.indexOf(quote, open + 1)
+	return end < 0 ? src.length : end
+}
+
+function closingParen(src: string, open: number): number {
+	let depth = 0
+	for (let i = open; i < src.length; i++) {
+		if (src[i] === '(') depth++
+		else if (src[i] === ')' && --depth === 0) return i
+	}
+	return src.length
+}
+
+/** The command word and its arguments, skipping env assignments, wrappers, and keywords. */
 function commandWords(words: string[]): string[] {
 	let i = 0
-	let wrapped = false
+	let prefixed = false
 	while (i < words.length) {
 		const w = words[i]!
 		if (/^[A-Za-z_]\w*=/.test(w)) i++
-		else if (WRAPPERS.has(basename(w))) (wrapped = true), i++
-		else if (wrapped && (w.startsWith('-') || /^\d+[smhd]?$/.test(w))) i++
+		else if (PREFIXES.has(basename(w))) (prefixed = true), i++
+		else if (prefixed && (w.startsWith('-') || /^\d+[smhd]?$/.test(w))) i++
 		else break
 	}
 	return words.slice(i)
@@ -91,6 +173,12 @@ function shellViolation(command: string, self: SwarmSelf | null): string | null 
 	for (const words of simpleCommands(command).map(commandWords)) {
 		const cmd = basename(words[0] ?? '')
 		if (cmd === 'amp' || cmd === 'gh') return `the ${cmd} CLI is not available in swarm threads`
+		if (SHELLS.has(cmd)) {
+			const flag = words.findIndex((w) => /^-[a-z]*c[a-z]*$/.test(w))
+			const payload = cmd === 'eval' ? words.slice(1).join(' ') : flag > 0 ? words[flag + 1] : undefined
+			const reason = payload ? shellViolation(payload, self) : null
+			if (reason) return reason
+		}
 		const sub = cmd === 'git' ? gitSubcommand(words) : -1
 		if (sub > 0 && words[sub] === 'push') {
 			const reason = pushViolation(words.slice(sub + 1), self)
@@ -117,7 +205,7 @@ function pushViolation(args: string[], self: SwarmSelf | null): string | null {
 	for (let i = 0; i < args.length; i++) {
 		const a = args[i]!
 		if (a === '-o' || a === '--push-option') i++
-		else if (/^--(force|delete|mirror|all|branches|tags|prune)/.test(a) || /^-[^-]*[fd]/.test(a)) {
+		else if (/^--(force|delete|mirror|all|branches|tags|follow-tags|prune|recurse-submodules=(on-demand|only))/.test(a) || /^-[^-]*[fd]/.test(a)) {
 			return `${usage}; ${a} is not allowed`
 		} else if (!a.startsWith('-')) positional.push(a)
 	}
