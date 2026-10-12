@@ -10,6 +10,7 @@ import {
 	ROLES,
 	type Role,
 	type SwarmSelf,
+	WORKER,
 	conflictedFiles as unmerged,
 	filesWithMarkers,
 	firstLine,
@@ -39,7 +40,7 @@ const CAP_REACHED_ERROR = 'cap reached: report remaining scope as blocked in you
  * Until Amp allows recursive delegation, only workers can be spawned.
  */
 const NO_SUBPLANNERS =
-	'cap reached: sub-planners cannot delegate on this Amp version (a child thread loses the tool that created it). Spawn workers for the slice yourself, or report the slice as blocked.'
+	'unsupported role swarm-planner: sub-planners cannot delegate on this Amp version (a child thread loses the tool that created it). Decompose the slice into swarm-worker tasks and spawn those.'
 const PACING_NOTE = 'Orb starts may be paced (20 burst, then one per 5 min); the child starts when its orb is ready.'
 /** Transcript scan bound: 50 pages of 20 user messages. */
 const MAX_SCAN_PAGES = 50
@@ -90,7 +91,16 @@ const isLive = (c: ChildEntry, handed: Set<string>) => !c.replacedBy && !c.faile
 
 /** NUL-separated path listing (`-z`), so names Git would quote (core.quotePath) stay real paths. */
 async function paths(root: string, cmd: string, ...args: string[]): Promise<string[]> {
-	return (await git(root, cmd, '-z', ...args)).stdout.split('\0').filter(Boolean)
+	const r = await git(root, cmd, '-z', ...args)
+	if (r.code !== 0) throw new Error(`git ${cmd} failed: ${firstLine(r.stderr)}`)
+	return r.stdout.split('\0').filter(Boolean)
+}
+
+/** Stage every docs/ change. No docs at all is a no-op; any other failure (e.g. an ignored docs/) is an error. */
+async function stageDocs(root: string): Promise<void> {
+	const add = await git(root, 'add', '-A', '--', 'docs')
+	if (add.code === 0 || /did not match any files/.test(add.stderr)) return
+	throw new Error(`publish_docs: git add docs failed (${firstLine(add.stderr)}); nothing was published`)
 }
 
 /** Files changed in the work tree or index under docs/, relative to HEAD, plus untracked ones. */
@@ -112,18 +122,18 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 	amp.registerTool({
 		name: 'spawn',
 		description:
-			'Delegate a task to a new child thread in its own orb. role swarm-worker executes one task; swarm-planner owns a slice and delegates it further. ' +
+			'Delegate one task to a new swarm-worker thread in its own orb. ' +
 			'`instructions` must be self-contained: the child sees only them. Pass `replaces` with an overdue or errored child id to replace it. Returns the child thread id.',
 		inputSchema: {
 			type: 'object',
 			properties: {
-				role: { type: 'string', enum: [...ROLES], description: 'swarm-worker for a task, swarm-planner for a slice' },
+				role: { type: 'string', enum: [WORKER], description: 'Always swarm-worker' },
 				title: { type: 'string', description: 'Short task title' },
 				instructions: { type: 'string', description: 'Complete task instructions for the child' },
 				deadlineMin: {
 					type: 'integer',
 					minimum: 1,
-					description: `Minutes before the child counts as overdue (default ${DEFAULT_DEADLINE_MIN['swarm-worker']} for workers, ${DEFAULT_DEADLINE_MIN['swarm-planner']} for planners)`,
+					description: `Minutes before the child counts as overdue (default ${DEFAULT_DEADLINE_MIN[WORKER]})`,
 				},
 				replaces: { type: 'string', description: 'Id of an existing child this one replaces' },
 			},
@@ -277,7 +287,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 					const pending = [...new Set([...(await unmerged(root)), ...(await changedDocs(root))])]
 					const marked = await filesWithMarkers(root, pending)
 					if (marked.length) return conflictResult(marked)
-					await git(root, 'add', '-A', '--', 'docs')
+					await stageDocs(root)
 					const cont = await git(root, 'rebase', '--continue')
 					if (cont.code !== 0) {
 						if (await operationInProgress(root)) {
@@ -287,7 +297,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 						throw new Error(`publish_docs: rebase --continue failed: ${firstLine(cont.stderr || cont.stdout)}`)
 					}
 				} else {
-					await git(root, 'add', '-A', '--', 'docs')
+					await stageDocs(root)
 					const staged = await paths(root, 'diff', '--cached', '--name-only', '--', 'docs')
 					if (staged.length) {
 						const marked = await filesWithMarkers(root, staged)

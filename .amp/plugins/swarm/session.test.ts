@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { PLANNER, type SwarmSelf, WORKER, git, operationInProgress } from './core'
-import { ensureRunBranch } from './session'
+import { ensureRunBranch, registerSession } from './session'
 
 const base = mkdtempSync(join(tmpdir(), 'swarm-session-'))
 afterAll(() => rmSync(base, { recursive: true, force: true }))
@@ -53,13 +53,13 @@ describe('ensureRunBranch', async () => {
 	const worker = await clone('worker')
 
 	test('root creates the remote run branch from HEAD and checks it out with upstream', async () => {
-		expect(await ensureRunBranch(root, self(PLANNER, RUN, null))).toBe(`checked out ${BRANCH}`)
+		expect(await ensureRunBranch(root, self(PLANNER, RUN, null))).toEqual({ ok: true, detail: `checked out ${BRANCH}` })
 		expect(await sh(root, 'ls-remote', '--heads', 'origin', BRANCH)).toContain(await sh(root, 'rev-parse', 'HEAD'))
 		expect(await sh(root, 'rev-parse', '--abbrev-ref', '@{u}')).toBe(`origin/${BRANCH}`)
 	})
 
 	test('a child does not create the branch; it tracks the existing one', async () => {
-		expect(await ensureRunBranch(worker, self(WORKER, CHILD, RUN))).toBe(`checked out ${BRANCH}`)
+		expect(await ensureRunBranch(worker, self(WORKER, CHILD, RUN))).toEqual({ ok: true, detail: `checked out ${BRANCH}` })
 		expect(await sh(worker, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH)
 	})
 
@@ -67,7 +67,7 @@ describe('ensureRunBranch', async () => {
 		await commitFile(worker, 'a.txt', 'a\n', 'unpushed work')
 		const tip = await sh(worker, 'rev-parse', 'HEAD')
 		await sh(worker, 'checkout', '-q', 'main') // e.g. something switched branches before reopen
-		expect(await ensureRunBranch(worker, self(WORKER, CHILD, RUN))).toBe(`on ${BRANCH}`)
+		expect(await ensureRunBranch(worker, self(WORKER, CHILD, RUN))).toEqual({ ok: true, detail: `on ${BRANCH}` })
 		expect(await sh(worker, 'rev-parse', 'HEAD')).toBe(tip)
 		await sh(worker, 'pull', '-q', '--rebase', 'origin', BRANCH)
 		await sh(worker, 'push', '-q', 'origin', `HEAD:${BRANCH}`)
@@ -84,8 +84,43 @@ describe('ensureRunBranch', async () => {
 		expect(pull.code).not.toBe(0)
 		expect(await operationInProgress(root)).toBe(true)
 
-		expect(await ensureRunBranch(root, self(PLANNER, RUN, null))).toBe('operation in progress; left as is')
+		expect(await ensureRunBranch(root, self(PLANNER, RUN, null))).toEqual({ ok: true, detail: 'operation in progress; left as is' })
 		expect(await operationInProgress(root)).toBe(true)
 		expect(await sh(root, 'diff', '--name-only', '--diff-filter=U')).toBe('decision.md')
+	})
+})
+
+describe('registerSession hooks', async () => {
+	process.env.SWARM_HOME = join(base, 'swarm-home')
+	const RUN2 = 'T-00000000-0000-0000-0000-000000000003' as const
+	const W2 = 'T-00000000-0000-0000-0000-000000000004' as const
+	const BRANCH2 = `swarm/${RUN2}`
+	const worker = await clone('hooked-worker')
+
+	const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<unknown>> = {}
+	registerSession({
+		on: (name: string, h: (event: unknown, ctx: unknown) => Promise<unknown>) => void (handlers[name] = h),
+		system: { workspaceRoot: { toString: () => worker } },
+		helpers: { filePathFromURI: (u: { toString(): string }) => u.toString() },
+	} as never)
+	const bootstrap = `[swarm run=${RUN2} parent=${RUN2} role=swarm-worker depth=1 deadlineMin=90 branch=${BRANCH2}]\n[swarm self=${W2} task: t]\n\nDo it.`
+	const thread = {
+		id: W2,
+		agent: async () => ({ definition: { kind: 'agent-definition', name: WORKER } }),
+		parentThreadID: async () => RUN2,
+		messages: async () => [{ role: 'user', id: 1, content: [{ type: 'text', text: bootstrap }] }],
+	}
+	const ctx = { thread, logger: { log() {} } }
+	const start = () => handlers['agent.start']!({ thread: { id: W2 }, message: 'x', id: 1 }, ctx) as Promise<{ message?: { content: string } }>
+
+	test('a failed checkout is reported to the agent and retried on the next turn', async () => {
+		await handlers['session.start']!({ thread: { id: W2 } }, ctx)
+		const first = await start()
+		expect(first.message?.content).toContain(`not on ${BRANCH2} (fetch failed`)
+
+		// The root creates the run branch later; the worker's next turn picks it up.
+		await sh(worker, 'push', '-q', 'origin', `HEAD:refs/heads/${BRANCH2}`)
+		expect(await start()).toEqual({})
+		expect(await sh(worker, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(BRANCH2)
 	})
 })

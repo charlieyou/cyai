@@ -37,6 +37,8 @@ The host must stop the orb's git identity from pushing the default branch (§8).
 - Run labels are `swarm-<last 12 chars of run id>` (labels cannot contain `:`).
 - `messages({ full: true })` returns nothing, so handoffs are detected from the default transcript
   view plus a record kept by an `agent.start` hook.
+- Field Guide: both prompts read `docs/field-guide/index.md` directly, since neither role may
+  edit `AGENTS.md`. Adding `@docs/field-guide/index.md` to the target's `AGENTS.md` also works.
 - The bootstrap message has a second line `[swarm self=<own id> task: <title>]`, and `children()`
   starts with a `you:` line, because agents otherwise cannot learn their own thread id.
 

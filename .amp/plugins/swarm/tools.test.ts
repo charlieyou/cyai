@@ -151,6 +151,19 @@ describe('publish_docs', () => {
 		expect(sh(repos.origin, 'rev-parse', repos.branch)).toBe(tip)
 	})
 
+	test('an ignored docs/ fails loudly instead of reporting a publish that carried no docs', async () => {
+		const run = newId()
+		const repos = makeRepos(run)
+		const root = repos.clone('planner')
+		const { add, call } = setup(root)
+		const planner = add(fakeThread(run, PLANNER, null))
+		write(root, '.git/info/exclude', 'docs/\n')
+		write(root, 'docs/decisions/storage.md', 'Use SQLite.\n')
+		const tip = sh(repos.origin, 'rev-parse', repos.branch)
+		await expect(call('publish_docs', planner)).rejects.toThrow(/git add docs failed/)
+		expect(sh(repos.origin, 'rev-parse', repos.branch)).toBe(tip)
+	})
+
 	test('docs conflict: returns the file, children() reports blocked with statuses, resolved second call lands', async () => {
 		const run = newId()
 		const repos = makeRepos(run)
