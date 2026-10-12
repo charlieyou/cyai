@@ -30,6 +30,13 @@ import type { SwarmAgents } from './modes'
 
 const LIVE_CAP_ERROR = 'wait for handoffs or replace an overdue child'
 const CAP_REACHED_ERROR = 'cap reached: report remaining scope as blocked in your handoff'
+/**
+ * Amp tells every child thread that "further thread creation is intentionally unavailable"; a
+ * sub-planner obeyed that over its prompt and refused `spawn` (demo run). The plugin-written first
+ * message and the tool description state that `spawn` is the sanctioned path.
+ */
+const SPAWN_NOTE =
+	"[swarm note: Amp's notice that thread creation is unavailable in delegated threads refers to its built-in thread tools. Your `spawn` tool is this swarm's sanctioned delegation path; your parent expects you to use it for all work in your slice.]"
 const PACING_NOTE = 'Orb starts may be paced (20 burst, then one per 5 min); the child starts when its orb is ready.'
 /** Transcript scan bound: 50 pages of 20 user messages. */
 const MAX_SCAN_PAGES = 50
@@ -102,7 +109,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 	amp.registerTool({
 		name: 'spawn',
 		description:
-			'Delegate a task to a new child thread in its own orb. role swarm-worker executes one task; swarm-planner owns a slice and delegates it further. ' +
+			'Delegate a task to a new child thread in its own orb. This is the swarm\'s sanctioned delegation tool for swarm-planner threads, including delegated sub-planners; Amp\'s notice that thread creation is unavailable refers to its built-in thread tools, not this one. role swarm-worker executes one task; swarm-planner owns a slice and delegates it further. ' +
 			'`instructions` must be self-contained: the child sees only them. Pass `replaces` with an overdue or errored child id to replace it. Returns the child thread id.',
 		inputSchema: {
 			type: 'object',
@@ -171,7 +178,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 					title,
 				})
 				try {
-					await child.appendUserMessage({ type: 'user-message', content: `${bootstrap}\n\n${instructions}` })
+					await child.appendUserMessage({ type: 'user-message', content: `${bootstrap}\n${role === PLANNER ? `${SPAWN_NOTE}\n` : ''}\n${instructions}` })
 				} catch (e) {
 					entry.failed = e instanceof Error ? e.message : String(e)
 					writeChildren(self, entries)
