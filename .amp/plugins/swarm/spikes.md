@@ -80,7 +80,9 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
   it was delivered ~1 s after that turn ended and got its own turn (not merged, not steered).
   Two back-to-back appends to an idle thread likewise produced two consecutive turns.
 - `appendUserMessage` from a child orb's plugin to its parent thread succeeded (no error),
-  unlike `state.get()` / `messages()` on the parent.
+  unlike `state.get()` / `messages()` on the parent. The message (sent 19:27Z) was delivered to
+  the parent only after the parent's long-running turn ended (~20:50Z), as its own turn: a busy
+  planner sees a handoff late but does not lose it.
 - Planning note: `agent.start` fires once per delivered message, so a planner sees each
   handoff as its own turn's `event.message`.
 
