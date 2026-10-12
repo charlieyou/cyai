@@ -37,7 +37,7 @@ The host must stop the orb's git identity from pushing the default branch (§8).
   owner's request, and may stop working if Amp closes it. Because Amp's runaway protection is
   bypassed, the root holds a run-wide budget of 100 threads (`RUN_BUDGET` in `core.ts`) and grants
   slices of it to sub-planners (`budget` in the bootstrap line). Depth stays capped at 3.
-- Read-only tools are `Read` and `finder` (there is no `Grep`/`Glob`); workers also get
+- Read-only tools are `Read` and `finder` (`Grep`/`Glob` are Claude Code names, not Amp tools); workers also get
   `shell_command_status`/`shell_command_kill` for long commands.
 - Run labels are `swarm-<last 12 chars of run id>` (labels cannot contain `:`).
 - `messages({ full: true })` returns nothing, so handoffs are detected from the default transcript

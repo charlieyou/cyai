@@ -22,7 +22,11 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
   list_agent_modes, oracle, painter, Read, read_mcp_resource, read_thread, read_web_page,
   send_thread_message, shell_command, shell_command_kill, shell_command_status, skill, Task,
   view_media, wait_for_threads, web_search`.
-- **Plan error:** there is no `Grep` or `Glob` built-in. Read-only built-ins are `Read` and `finder`.
+- **Plan error:** `Grep` and `Glob` are Claude Code tool names, not Amp's; no Amp model family has
+  them. Read-only built-ins are `Read` and `finder`. Amp's default tool sets do vary by model
+  family (its official modes give Opus `edit_file`/`create_file`, GPT `apply_patch`), but an
+  explicit include list overrides that: the GPT worker used `Read`, `edit_file`, `create_file` and
+  `apply_patch`, and the Opus planner had `Read`, `edit_file` and `create_file`.
 - A worker with `include: [Read, oracle, edit_file, create_file, apply_patch, shell_command,
   spike_probe, spike_messages]`, `exclude: [code_exec, tool_search]` listed exactly those tools.
   No `code_exec`, `tool_search`, `create_thread`, other plugins' tools (`monitor_*`), or the
