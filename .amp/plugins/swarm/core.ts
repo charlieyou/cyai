@@ -104,20 +104,26 @@ export function saveSelf(self: SwarmSelf): void {
 // ---------------------------------------------------------------------------------------------
 // Role and self resolution.
 
-const roleCache = new Map<string, Role | null>()
+const roleCache = new Map<string, Role>()
 
-/** The swarm role of a thread, from its agent definition name; null for every non-swarm thread. */
+/**
+ * The swarm role of a thread, from its agent definition name; null for every non-swarm thread.
+ * Only a swarm role is cached: early in a new thread's session `agent()` can fail or not yet report
+ * the custom agent, and caching that null made a worker unguarded and unable to hand off (demo run).
+ */
 export async function roleOf(thread: PluginThread): Promise<Role | null> {
-	if (roleCache.has(thread.id)) return roleCache.get(thread.id)!
-	let role: Role | null = null
+	const cached = roleCache.get(thread.id)
+	if (cached) return cached
 	try {
 		const def = (await thread.agent()).definition
-		if (def.kind === 'agent-definition' && (ROLES as readonly string[]).includes(def.name ?? '')) role = def.name as Role
+		if (def.kind === 'agent-definition' && (ROLES as readonly string[]).includes(def.name ?? '')) {
+			roleCache.set(thread.id, def.name as Role)
+			return def.name as Role
+		}
 	} catch {
-		role = null
+		// Not resolvable yet; the next call retries.
 	}
-	roleCache.set(thread.id, role)
-	return role
+	return null
 }
 
 /**
