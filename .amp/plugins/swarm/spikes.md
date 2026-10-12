@@ -10,7 +10,7 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
 |---|---|---|
 | S0 | pass, with caveats | Include list + two excludes gives exactly those tools; `oracle` is includable and works from a worker in an orb. |
 | S1 | pass | Plugin tool in an orb creates orb children in a custom mode; `parentThreadID()` matches; works recursively (grandchildren). |
-| S2 | see below | |
+| S2 | pass | Append wakes a paused orb thread and runs a turn; appends to a running thread queue and each gets its own turn. |
 | S3 | pass, with caveats | `tool.call` fires and `reject-and-continue` works for all four tools; `agent.end` `continue` works; `messages({ full: true })` is broken. |
 | S4 | pass | Contention resolves by rebase; content conflict → abort → wip push keeps every commit, visible from a third checkout. |
 | S5 | not run | Optional. |
@@ -59,7 +59,19 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
 
 ## S2 — waking parents
 
-PENDING
+- Paused orb: a spike-planner orb thread finished its turn at 19:29:31Z and sat idle 8 min
+  (orbs pause ~5 min after activity stops). `appendUserMessage` at 19:37:47Z returned in ~1 s
+  with state `idle → running`; the thread ran a full turn (Read + `spike_state`) and answered.
+  `/proc/uptime` in the resumed orb read 370 s, i.e. it had accumulated only ~6 min of running
+  time since boot, consistent with a pause and resume (E2B snapshots keep process memory, so
+  the plugin's in-memory state survived too). Hard gate passes.
+- Running thread: appending while a turn was running (`before: running`) queued the message;
+  it was delivered ~1 s after that turn ended and got its own turn (not merged, not steered).
+  Two back-to-back appends to an idle thread likewise produced two consecutive turns.
+- `appendUserMessage` from a child orb's plugin to its parent thread succeeded (no error),
+  unlike `state.get()` / `messages()` on the parent.
+- Planning note: `agent.start` fires once per delivered message, so a planner sees each
+  handoff as its own turn's `event.message`.
 
 ## S3 — hooks
 
