@@ -55,7 +55,8 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
   delegated thread … Do not build another thread-creation mechanism", so an alias spawn tool
   would deliberately evade a platform restriction. At the owner's request the plugin
   does it anyway: identical `spawn` and `spawn_alt` tools, so every generation keeps one, plus a
-  run-wide thread budget. See README.md.
+  run-wide thread budget. See README.md. Live depth-2 demo: root → sub-planner via `spawn` →
+  two workers via `spawn_alt` → handoffs up both levels; 8 tests pass on the branch.
 - Child orbs clone the project's base branch and load project plugins from that checkout, so
   **the plugin must be on the target repository's base branch** (or be a global plugin) for
   children to have it. Without `project`, children use the project matching the plugin's

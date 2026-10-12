@@ -5,7 +5,20 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { type ChildEntry, PLANNER, RUN_BUDGET, type Role, WORKER, budgetSpent, formatBootstrap, loadSelf, readChildren, writeChildren } from './core'
+import {
+	type ChildEntry,
+	PLANNER,
+	RUN_BUDGET,
+	type Role,
+	WORKER,
+	budgetSpent,
+	formatBootstrap,
+	loadSelf,
+	readChildren,
+	swarmHome,
+	writeChildren,
+	writeJSON,
+} from './core'
 import type { SwarmAgents } from './modes'
 import { registerTools } from './tools'
 
@@ -88,10 +101,11 @@ function fakeThread(id: ThreadID, role: string | null, parent: ThreadID | null, 
 			f.labels.push(...labels)
 			return f.labels
 		},
+		// A failing append records the message first: the caller cannot know whether it was delivered.
 		appendUserMessage: async (m: { content: string }) => {
-			if (f.appendFails) throw new Error('append rejected')
 			f.appended.push(m.content)
 			f.userTexts.push(m.content)
+			if (f.appendFails) throw new Error('append acknowledgement failed')
 		},
 	} as unknown as PluginThread
 	return f
@@ -332,7 +346,7 @@ describe('spawn', () => {
 	})
 
 	test('sub-planners: both spawn tools work, the budget is granted down and enforced across the tree', async () => {
-		const { add, call, created } = setup()
+		const { add, call, created, setAppendFails } = setup()
 		const run = newId()
 		const root = add(fakeThread(run, PLANNER, null))
 
@@ -357,13 +371,32 @@ describe('spawn', () => {
 		)
 		expect(await call('children', sub)).toContain('budget 0 of 3 threads left')
 
+		// A delivery that errors after the child may have received its grant does not refund it.
+		setAppendFails(true)
+		await expect(call('spawn', root, { role: PLANNER, title: 'x', instructions: 'x', budget: 2 })).rejects.toThrow(/could not deliver/)
+		setAppendFails(false)
+
 		// Replacing a sub-planner grants a fresh budget: the old subtree may already have used its own.
 		const rootSelf = (await loadSelf(root.thread))!
 		await call('spawn', root, { role: PLANNER, title: 'slice', instructions: 'Own the slice.', budget: 3, replaces: sub.thread.id })
-		expect(budgetSpent(readChildren(rootSelf))).toBe(8)
+		expect(budgetSpent(readChildren(rootSelf))).toBe(11)
 		await expect(call('spawn', root, { role: PLANNER, title: 'big', instructions: 'x', budget: RUN_BUDGET })).rejects.toThrow(
-			`(${RUN_BUDGET - 9} for a sub-planner)`,
+			`(${RUN_BUDGET - 12} for a sub-planner)`,
 		)
+	})
+})
+
+describe('legacy identity', () => {
+	test('a self.json cached before budgets keeps working when the bootstrap is no longer visible', async () => {
+		const { add, call } = setup()
+		const run = newId()
+		const worker = add(fakeThread(newId(), WORKER, run, []))
+		const legacy = { run, thread: worker.thread.id, parent: run, role: WORKER, depth: 1, deadlineMin: 90, branch: `swarm/${run}`, title: 'old' }
+		writeJSON(join(swarmHome(), run, worker.thread.id, 'self.json'), legacy)
+		writeJSON(join(swarmHome(), 'threads', `${worker.thread.id}.json`), { run })
+		add(fakeThread(run, PLANNER, null))
+		expect(await call('handoff', worker, { report: 'done' })).toContain('delivered')
+		expect((await loadSelf(worker.thread))!.budget).toBe(0)
 	})
 })
 

@@ -67,7 +67,7 @@ export function formatBootstrap(b: Omit<SwarmSelf, 'budget'> & { budget?: number
 
 const BOOTSTRAP_RE =
 	/^\[swarm run=(T-[\w-]+) parent=(T-[\w-]+) role=(swarm-planner|swarm-worker) depth=(\d+) deadlineMin=(\d+) branch=(\S+)\]/
-const SELF_RE = /^\[swarm self=T-[\w-]+ budget=(\d+) task: (.*)\]$/m
+const SELF_RE = /^\[swarm self=T-[\w-]+(?: budget=(\d+))? task: (.*)\]$/m
 
 export function parseBootstrap(thread: ThreadID, text: string): SwarmSelf | null {
 	const m = BOOTSTRAP_RE.exec(text.trimStart())
@@ -82,7 +82,7 @@ export function parseBootstrap(thread: ThreadID, text: string): SwarmSelf | null
 		deadlineMin: Number(m[5]),
 		branch: m[6]!,
 		title: line2?.[2] ?? '',
-		budget: line2 ? Number(line2[1]) : 0,
+		budget: Number(line2?.[1] ?? 0),
 	}
 }
 
@@ -152,7 +152,14 @@ export async function loadSelf(thread: PluginThread): Promise<SwarmSelf | null> 
 	const pointer = readJSON<{ run?: string } | null>(pointerPath(thread.id), null)
 	if (pointer?.run) {
 		const cached = readJSON<SwarmSelf | null>(selfPath(pointer.run, thread.id), null)
-		if (cached && typeof cached.budget === 'number') return cached
+		if (cached) {
+			// Identity cached before budgets existed: a root holds the run budget; children got no grant.
+			if (typeof cached.budget !== 'number') {
+				cached.budget = cached.parent === null ? RUN_BUDGET : 0
+				saveSelf(cached)
+			}
+			return cached
+		}
 	}
 	const parent = await thread.parentThreadID()
 	let self: SwarmSelf | null = null
@@ -183,8 +190,11 @@ export async function loadSelf(thread: PluginThread): Promise<SwarmSelf | null> 
 // ---------------------------------------------------------------------------------------------
 // Child registry and serialization.
 
-/** Threads this planner's subtree has used: each child costs 1, plus the budget granted to it. */
-export const budgetSpent = (entries: ChildEntry[]) => entries.reduce((n, c) => n + 1 + (c.failed ? 0 : (c.budget ?? 0)), 0)
+/**
+ * Threads this planner's subtree has used: each created child costs 1 plus the budget granted to
+ * it. A failed delivery still costs its grant: the child may have received its bootstrap anyway.
+ */
+export const budgetSpent = (entries: ChildEntry[]) => entries.reduce((n, c) => n + 1 + (c.budget ?? 0), 0)
 
 export const readChildren = (self: SwarmSelf) => readJSON<ChildEntry[]>(childrenPath(self.run, self.thread), [])
 export const writeChildren = (self: SwarmSelf, entries: ChildEntry[]) =>
