@@ -9,7 +9,7 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
 | ID | Verdict | One line |
 |---|---|---|
 | S0 | pass, with caveats | Include list + two excludes gives exactly those tools; `oracle` is includable and works from a worker in an orb. |
-| S1 | pass | Plugin tool in an orb creates orb children in a custom mode; `parentThreadID()` matches; works recursively (grandchildren). |
+| S1 | **partial: recursion blocked** | Orb-to-orb creation from a plugin tool works and `parentThreadID()` matches, but Amp removes from each child the plugin tool that created it, so a sub-planner spawned by `spawn` cannot spawn. |
 | S2 | pass | Append wakes a paused orb thread and runs a turn; appends to a running thread queue and each gets its own turn. |
 | S3 | pass, with caveats | `tool.call` fires and `reject-and-continue` works for all four tools; `agent.end` `continue` works; `messages({ full: true })` is broken. |
 | S4 | pass | Contention resolves by rebase; content conflict → abort → wip push keeps every commit, visible from a third checkout. |
@@ -44,18 +44,29 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
 - The child's `spike_probe` reports `agentName: spike-planner|spike-worker` (via
   `ctx.thread.agent()`), `parent` = creator id, labels `["child-thread", "swarm-spike"]`
   (Amp adds `child-thread` itself).
-- Recursion works: a `spike-planner` child spawned a grandchild, which spawned another level.
+- **Recursion is blocked by Amp (stop condition for sub-planners).** Amp removes from every child
+  thread the plugin tool that created it. Evidence, all in custom planner modes whose include list
+  names both spike tools: a child created via `spike_spawn` listed `spike_make` but not
+  `spike_spawn`; children created via `spike_make` listed `spike_spawn` but not `spike_make`; a
+  grandchild created via `spike_spawn` under a `spike_make` child listed `spike_make`. In the real
+  plugin, sub-planners created via `spawn` listed every planner tool except `spawn` (two runs);
+  a planner created via a different tool, with an identical bootstrap message, did list `spawn`.
+  Amp's child-thread prompt says "Further thread creation is intentionally unavailable in this
+  delegated thread … Do not build another thread-creation mechanism", so an alias spawn tool
+  would deliberately evade a platform restriction. The plugin does not do that: `spawn` refuses
+  `role: swarm-planner` and the swarm runs at depth 1 (root + workers). Sub-planners need Amp to
+  allow recursive delegation for plugin agents.
 - Child orbs clone the project's base branch and load project plugins from that checkout, so
   **the plugin must be on the target repository's base branch** (or be a global plugin) for
   children to have it. Without `project`, children use the project matching the plugin's
   checkout remote.
-- Gotcha: Amp's child-thread system prompt tells the model that thread creation is unavailable.
-  One spike-planner therefore refused to call `spike_spawn` until told explicitly to call it.
-  The planner prompt must say that `spawn` is the sanctioned delegation tool.
 - Label rule: labels must match `[a-z0-9][a-z0-9-]*`, ≤ 32 chars. **Plan error:** `swarm:<run>`
   is invalid (colon, and a thread id is 38 chars). Use `swarm-<last 12 chars of run id>`.
+- `spawn` occasionally failed with `The operation was aborted.` when a planner issued three
+  spawns in one parallel batch (3 of 4 runs, always one call). In every case `children()` showed
+  no entry and the planner retried cleanly; the cause is not visible from the plugin.
 - Mode listing: `list_agent_modes` (and so `create_thread` with `agent_mode`) does not show
-  project-plugin modes. Roots are started through the plugin (see README).
+  project-plugin modes. Start roots as described in README.md.
 
 ## S2 — waking parents
 
@@ -90,6 +101,17 @@ Amp-hosted project `swarm-demo` that carries the same plugin in `.amp/plugins/sp
   148-message transcript in 8 pages / 4.2 s. That default view loses messages behind a
   compaction, so the plugin also records handoffs in an `agent.start` hook and scans the
   transcript with `full: true` first and the default view as fallback.
+- **`tool.call` does not fire for the built-in `oracle`** (a worker's oracle call is absent from
+  its hook log), so oracle failures cannot be injected by a plugin. The "oracle errors" negative
+  check was run as a prompt-level simulation instead.
+- One worker (1 of 9 in the first runs) never resolved its swarm identity: `~/.swarm` was never
+  written, `session.start` did not check out the run branch, its push went through unguarded, and
+  `handoff` failed with "not part of a swarm run". The plugin cached a null role per thread, so
+  one early `thread.agent()` failure or non-custom answer would explain all four symptoms
+  (hypothesis; the orb's logs do not show the `agent()` result). Only swarm roles are cached now.
+- Cross-thread control: `thread.cancel()` on another thread fails with `only available for
+  connected threads`, so a test cannot kill a worker from outside; a "dead" worker was emulated by
+  a worker that stopped without handing off.
 - Cross-thread reads: `amp.threads.get(id).state.get()` worked for a child from its parent's
   plugin (also after the parent's plugin process restarted). From a child, reading its
   parent's state, `parentThreadID()` or `messages()` fails: `thread.state is only available for
