@@ -58,21 +58,31 @@ const GIT_OPTS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--
 /**
  * Simple commands of a shell line as word lists, from a small quote-aware scanner: quotes join
  * words as the shell does, control operators and newlines end a command, redirections and their
- * targets are dropped, here-doc bodies are skipped, and the payloads of `$(...)` and backticks
- * are scanned as commands of their own.
+ * targets are dropped, and comments are skipped. Code the shell runs indirectly is scanned too:
+ * `$(...)` and backtick payloads (also inside double quotes and unquoted here-docs) and here-doc
+ * bodies fed to a shell. Other here-doc bodies are data.
  */
 function simpleCommands(src: string): string[][] {
+	return scan(src, 0, false).commands
+}
+
+/** Scans `src` from `start`; inside a `$(`, stops at its closing `)` and returns that index. */
+function scan(src: string, start: number, inSubstitution: boolean): { commands: string[][]; end: number } {
 	const commands: string[][] = []
-	const heredocs: string[] = []
+	const heredocs: { delim: string; quoted: boolean; words: string[] }[] = []
 	let words: string[] = []
 	let word: string | null = null
+	let quoted = false // the current word contains quoting (a quoted here-doc delimiter means a literal body)
 	let target: 'file' | 'heredoc' | null = null // what the next word is, after a redirection
+	let depth = 0 // open ( subshells
 	const add = (text: string) => (word = (word ?? '') + text)
 	const endWord = () => {
-		if (word !== null && target === 'heredoc') heredocs.push(word.replace(/^-/, ''))
-		else if (word !== null && !target) words.push(word)
-		if (word !== null) target = null
+		if (word === null) return
+		if (target === 'heredoc') heredocs.push({ delim: word.replace(/^-/, ''), quoted, words })
+		else if (!target) words.push(word)
+		target = null
 		word = null
+		quoted = false
 	}
 	const endCommand = () => {
 		endWord()
@@ -80,32 +90,44 @@ function simpleCommands(src: string): string[][] {
 		if (words.length) commands.push(words)
 		words = []
 	}
-	const substitute = (from: number, to: number) => {
-		commands.push(...simpleCommands(src.slice(from, to)))
+	const substitution = (from: number) => {
+		const inner = scan(src, from, true)
+		commands.push(...inner.commands)
 		add('$')
+		return inner.end
+	}
+	const backticks = (from: number) => {
+		const end = closing(src, from - 1, '`')
+		commands.push(...simpleCommands(src.slice(from, end)))
+		add('$')
+		return end
 	}
 
-	for (let i = 0; i < src.length; i++) {
+	let i = start
+	for (; i < src.length; i++) {
 		const c = src[i]!
 		if (c === '\\') {
+			quoted = true
 			if (src[i + 1] !== '\n') add(src[i + 1] ?? '')
 			i++
 		} else if (c === "'") {
+			quoted = true
 			const end = closing(src, i, "'")
 			add(src.slice(i + 1, end))
 			i = end
 		} else if (c === '"') {
+			quoted = true
 			add('')
 			for (i++; i < src.length && src[i] !== '"'; i++) {
 				if (src[i] === '\\') add(src[++i] ?? '')
-				else if (src[i] === '`') substitute(i + 1, (i = closing(src, i, '`')))
-				else if (src.startsWith('$(', i)) substitute(i + 2, (i = closingParen(src, i + 1)))
+				else if (src[i] === '`') i = backticks(i + 1)
+				else if (src.startsWith('$(', i)) i = substitution(i + 2)
 				else add(src[i]!)
 			}
 		} else if (c === '`') {
-			substitute(i + 1, (i = closing(src, i, '`')))
+			i = backticks(i + 1)
 		} else if (src.startsWith('$(', i)) {
-			substitute(i + 2, (i = closingParen(src, i + 1)))
+			i = substitution(i + 2)
 		} else if (c === '<' || c === '>' || src.startsWith('&>', i)) {
 			if (word !== null && /^\d+$/.test(word)) word = null // the fd in 2>file
 			endWord()
@@ -116,16 +138,31 @@ function simpleCommands(src: string): string[][] {
 		} else if (c === '\n') {
 			endCommand()
 			let pos = i + 1
-			for (const delim of heredocs.splice(0)) {
-				for (;;) {
+			for (const doc of heredocs.splice(0)) {
+				const bodyStart = pos
+				let bodyEnd = src.length
+				while (pos < src.length) {
 					const nl = src.indexOf('\n', pos)
-					const line = src.slice(pos, nl < 0 ? src.length : nl)
-					pos = nl < 0 ? src.length : nl + 1
-					if (nl < 0 || line.replace(/^\t+/, '') === delim) break
+					const lineEnd = nl < 0 ? src.length : nl
+					const atDelimiter = src.slice(pos, lineEnd).replace(/^\t+/, '') === doc.delim
+					if (atDelimiter) bodyEnd = pos
+					pos = lineEnd + 1
+					if (atDelimiter) break
 				}
+				const body = src.slice(bodyStart, bodyEnd)
+				const consumer = basename(commandWords(doc.words)[0] ?? '')
+				if (SHELLS.has(consumer)) commands.push(...simpleCommands(body))
+				else if (!doc.quoted) commands.push(...substitutions(body))
 			}
 			i = pos - 1
-		} else if (';&|()'.includes(c)) {
+		} else if (c === '(') {
+			endCommand()
+			depth++
+		} else if (c === ')') {
+			endCommand()
+			if (depth === 0 && inSubstitution) break
+			depth = Math.max(0, depth - 1)
+		} else if (';&|'.includes(c)) {
 			endCommand()
 		} else if (c === '#' && word === null) {
 			i = closing(src, i, '\n') - 1 // a comment; its apostrophes must not open a quote
@@ -136,21 +173,30 @@ function simpleCommands(src: string): string[][] {
 		}
 	}
 	endCommand()
+	return { commands, end: i }
+}
+
+/** Commands in the `$(...)` and backtick substitutions of an unquoted here-doc body. */
+function substitutions(text: string): string[][] {
+	const commands: string[][] = []
+	for (let i = 0; i < text.length; i++) {
+		if (text[i] === '\\') i++
+		else if (text[i] === '`') {
+			const end = closing(text, i, '`')
+			commands.push(...simpleCommands(text.slice(i + 1, end)))
+			i = end
+		} else if (text.startsWith('$(', i)) {
+			const inner = scan(text, i + 2, true)
+			commands.push(...inner.commands)
+			i = inner.end
+		}
+	}
 	return commands
 }
 
 const closing = (src: string, open: number, quote: string) => {
 	const end = src.indexOf(quote, open + 1)
 	return end < 0 ? src.length : end
-}
-
-function closingParen(src: string, open: number): number {
-	let depth = 0
-	for (let i = open; i < src.length; i++) {
-		if (src[i] === '(') depth++
-		else if (src[i] === ')' && --depth === 0) return i
-	}
-	return src.length
 }
 
 /** The command word and its arguments, skipping env assignments, wrappers, and keywords. */

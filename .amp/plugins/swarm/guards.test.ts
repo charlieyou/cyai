@@ -108,6 +108,9 @@ describe('shell guard', () => {
 		'eval "gh pr list"',
 		"# it's late\ngit push origin main",
 		"cat > notes.txt <<'EOF'\ndon't push\nEOF\ngit push origin main",
+		"bash <<'SH'\ngit push origin main\nSH",
+		'cat <<EOF\nPR: $(gh pr view --json url)\nEOF',
+		`git commit -m "$(cat <<'MSG'\nFix handling of unmatched ( and don't\nMSG\n)" && git push origin main`,
 	])('rejects %s', async (command) => {
 		expect(await sh(command)).toBe('reject-and-continue')
 	})
@@ -133,6 +136,8 @@ describe('shell guard', () => {
 		'git commit -m "$(cat msg.txt)"',
 		'cat > notes.md <<EOF\ngh pr create\namp threads list\nEOF',
 		'bash scripts/build.sh',
+		"cat <<'EOF' > notes.md\nrun $(gh pr view) later\nEOF",
+		`git commit -m "$(cat <<'MSG'\nFix handling of unmatched ( and don't\nMSG\n)" && git push origin HEAD:swarm/${RUN}`,
 		`for i in 1 2 3; do git pull --rebase origin swarm/${RUN} && git push origin HEAD:swarm/${RUN} && break; done`,
 	])('allows %s', async (command) => {
 		expect(await sh(command)).toBe('allow')
