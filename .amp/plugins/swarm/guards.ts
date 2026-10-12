@@ -151,8 +151,9 @@ function scan(src: string, start: number, inSubstitution: boolean): { commands: 
 				}
 				const body = src.slice(bodyStart, bodyEnd)
 				const consumer = basename(commandWords(doc.words)[0] ?? '')
+				// Two stages: this shell expands an unquoted body, then a consuming shell runs it.
+				if (!doc.quoted) commands.push(...substitutions(body))
 				if (SHELLS.has(consumer)) commands.push(...simpleCommands(body))
-				else if (!doc.quoted) commands.push(...substitutions(body))
 			}
 			i = pos - 1
 		} else if (c === '(') {
