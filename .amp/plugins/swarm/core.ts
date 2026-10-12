@@ -82,6 +82,8 @@ export const stateDir = (run: string, thread: string) => join(swarmHome(), run, 
 export const selfPath = (run: string, thread: string) => join(stateDir(run, thread), 'self.json')
 export const childrenPath = (run: string, thread: string) => join(stateDir(run, thread), 'children.json')
 export const handoffsPath = (run: string, thread: string) => join(stateDir(run, thread), 'handoffs.json')
+/** Written by `handoff` after a successful delivery; the backstop leaves such threads alone. */
+export const handedOffPath = (run: string, thread: string) => join(stateDir(run, thread), 'handed-off.json')
 const pointerPath = (thread: string) => join(swarmHome(), 'threads', `${thread}.json`)
 
 export function readJSON<T>(path: string, fallback: T): T {

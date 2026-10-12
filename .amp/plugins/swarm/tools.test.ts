@@ -289,10 +289,12 @@ describe('spawn', () => {
 		expect(entries).toHaveLength(11)
 	})
 
-	test('total and depth caps; workers cannot spawn', async () => {
-		const { add, call } = setup()
+	test('total and depth caps; workers cannot spawn; sub-planners are refused', async () => {
+		const { add, call, created } = setup()
 		const run = newId()
 		const planner = add(fakeThread(run, PLANNER, null))
+		await expect(spawnWorker(call, planner, { role: PLANNER })).rejects.toThrow(/sub-planners cannot delegate/)
+		expect(created).toHaveLength(0)
 		const self = (await loadSelf(planner.thread))!
 		const spent: ChildEntry[] = Array.from({ length: 60 }, () => ({
 			id: newId(),

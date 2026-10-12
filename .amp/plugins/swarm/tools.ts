@@ -15,6 +15,7 @@ import {
 	firstLine,
 	formatBootstrap,
 	git,
+	handedOffPath,
 	handoffSources,
 	loadSelf,
 	operationInProgress,
@@ -25,18 +26,20 @@ import {
 	withLock,
 	workspaceRoot,
 	writeChildren,
+	writeJSON,
 } from './core'
 import type { SwarmAgents } from './modes'
 
 const LIVE_CAP_ERROR = 'wait for handoffs or replace an overdue child'
 const CAP_REACHED_ERROR = 'cap reached: report remaining scope as blocked in your handoff'
 /**
- * Amp tells every child thread that "further thread creation is intentionally unavailable"; a
- * sub-planner obeyed that over its prompt and refused `spawn` (demo run). The plugin-written first
- * message and the tool description state that `spawn` is the sanctioned path.
+ * Amp removes from every child thread the plugin tool that created it (spikes.md S1), so a
+ * sub-planner spawned by `spawn` has no `spawn` and cannot delegate. Amp also tells child threads
+ * not to build another thread-creation mechanism, so the plugin does not register an alias tool.
+ * Until Amp allows recursive delegation, only workers can be spawned.
  */
-const SPAWN_NOTE =
-	"[swarm note: Amp's notice that thread creation is unavailable in delegated threads refers to its built-in thread tools. Your `spawn` tool is this swarm's sanctioned delegation path; your parent expects you to use it for all work in your slice.]"
+const NO_SUBPLANNERS =
+	'cap reached: sub-planners cannot delegate on this Amp version (a child thread loses the tool that created it). Spawn workers for the slice yourself, or report the slice as blocked.'
 const PACING_NOTE = 'Orb starts may be paced (20 burst, then one per 5 min); the child starts when its orb is ready.'
 /** Transcript scan bound: 50 pages of 20 user messages. */
 const MAX_SCAN_PAGES = 50
@@ -109,7 +112,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 	amp.registerTool({
 		name: 'spawn',
 		description:
-			'Delegate a task to a new child thread in its own orb. This is the swarm\'s sanctioned delegation tool for swarm-planner threads, including delegated sub-planners; Amp\'s notice that thread creation is unavailable refers to its built-in thread tools, not this one. role swarm-worker executes one task; swarm-planner owns a slice and delegates it further. ' +
+			'Delegate a task to a new child thread in its own orb. role swarm-worker executes one task; swarm-planner owns a slice and delegates it further. ' +
 			'`instructions` must be self-contained: the child sees only them. Pass `replaces` with an overdue or errored child id to replace it. Returns the child thread id.',
 		inputSchema: {
 			type: 'object',
@@ -130,6 +133,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 			const self = await requirePlanner(ctx, 'spawn')
 			const role = input.role as Role
 			if (!ROLES.includes(role)) throw new Error(`spawn: role must be one of ${ROLES.join(', ')}`)
+			if (role === PLANNER) throw new Error(`spawn: ${NO_SUBPLANNERS}`)
 			const title = typeof input.title === 'string' ? input.title.trim() : ''
 			const instructions = typeof input.instructions === 'string' ? input.instructions.trim() : ''
 			if (!title || !instructions) throw new Error('spawn: title and instructions are required')
@@ -153,7 +157,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 				}
 				if (live >= CAPS.liveChildren) throw new Error(`spawn: ${LIVE_CAP_ERROR} (${live} live children)`)
 
-				const child = await agents[role === PLANNER ? 'planner' : 'worker'].createThread({
+				const child = await agents.worker.createThread({
 					parentThreadID: ctx.thread.id,
 					executor: 'orb',
 				})
@@ -178,7 +182,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 					title,
 				})
 				try {
-					await child.appendUserMessage({ type: 'user-message', content: `${bootstrap}\n${role === PLANNER ? `${SPAWN_NOTE}\n` : ''}\n${instructions}` })
+					await child.appendUserMessage({ type: 'user-message', content: `${bootstrap}\n\n${instructions}` })
 				} catch (e) {
 					entry.failed = e instanceof Error ? e.message : String(e)
 					writeChildren(self, entries)
@@ -333,6 +337,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 			} catch (e) {
 				throw new Error(`handoff: delivery to ${parent} failed (${e instanceof Error ? e.message : e}); call handoff again`)
 			}
+			writeJSON(handedOffPath(self.run, self.thread), { at: new Date().toISOString() })
 			return `handoff delivered to ${parent}`
 		},
 	})

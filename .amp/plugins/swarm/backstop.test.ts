@@ -6,7 +6,7 @@ import { join } from 'node:path'
 process.env.SWARM_HOME = mkdtempSync(join(tmpdir(), 'swarm-backstop-'))
 
 import { NUDGE, registerBackstop } from './backstop'
-import { HANDOFF_RE, PLANNER, WORKER, formatBootstrap, runBranch } from './core'
+import { HANDOFF_RE, PLANNER, WORKER, formatBootstrap, handedOffPath, runBranch, writeJSON } from './core'
 
 const RUN = 'T-run0000-0000-0000-0000-000000000000'
 const PARENT = 'T-par00000-0000-0000-0000-000000000000'
@@ -98,6 +98,15 @@ describe('handoff backstop', () => {
 
 		const retry = await end(worker, 'task', [user('task'), ...handoffCall('error'), said('The append failed.')])
 		expect(retry).toMatchObject({ action: 'continue', userMessage: NUDGE })
+	})
+
+	test('a worker that handed off in an earlier turn is not nudged on later turns', async () => {
+		const { end, appended } = setup()
+		const worker = fakeThread(WORKER)
+		writeJSON(handedOffPath(RUN, worker.id), { at: 'earlier' })
+		expect(await end(worker, 'owner follow-up', [user('owner follow-up'), said('Already reported.')])).toBeUndefined()
+		expect(await end(worker, NUDGE, [user(NUDGE), said('Already reported.')])).toBeUndefined()
+		expect(appended).toEqual([])
 	})
 
 	test('planners, cancelled turns, and non-swarm threads are left alone', async () => {

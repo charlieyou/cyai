@@ -3,7 +3,9 @@
 
 import type { AgentEndResult, PluginAPI, ThreadMessage } from '@ampcode/plugin'
 
-import { WORKER, loadSelf, roleOf } from './core'
+import { existsSync } from 'node:fs'
+
+import { WORKER, handedOffPath, loadSelf, roleOf } from './core'
 
 export const NUDGE =
 	'Call `handoff` now with your report: what is done, where it is (commits on the run branch or your wip ref), deviations, concerns, and anything blocked. If you could not finish, hand off as blocked; do not keep working.'
@@ -16,6 +18,8 @@ export function registerBackstop(amp: PluginAPI): void {
 		if ((await roleOf(ctx.thread)) !== WORKER) return
 		const self = await loadSelf(ctx.thread)
 		if (!self?.parent) return
+		// Handed off in an earlier turn (e.g. the owner asked a follow-up): nothing is owed.
+		if (existsSync(handedOffPath(self.run, self.thread))) return
 
 		const handedOff = amp.helpers
 			.toolCallsInMessages(event.messages)
