@@ -110,6 +110,10 @@ describe('shell guard', () => {
 		"cat > notes.txt <<'EOF'\ndon't push\nEOF\ngit push origin main",
 		"bash <<'SH'\ngit push origin main\nSH",
 		"bash <<EOF\nprintf '%s\\n' 'PR: $(gh pr view --json url)'\nEOF",
+		'bash <<EOF\nprintf "PR: \\$(gh pr view --json url)"\nEOF',
+		'cat <<- EOF\n\tnotes\n\tEOF\ngit push origin main',
+		"cat <<-'EOF'\nnotes\nEOF\ngit push origin main",
+		"bash <<< 'gh pr view'",
 		'cat <<EOF\nPR: $(gh pr view --json url)\nEOF',
 		`git commit -m "$(cat <<'MSG'\nFix handling of unmatched ( and don't\nMSG\n)" && git push origin main`,
 	])('rejects %s', async (command) => {
@@ -139,6 +143,8 @@ describe('shell guard', () => {
 		'bash scripts/build.sh',
 		"cat <<'EOF' > notes.md\nrun $(gh pr view) later\nEOF",
 		"bash <<'EOF'\nprintf '%s\\n' 'PR: $(gh pr view --json url)'\nEOF",
+		"bash <<'EOF'\nprintf \"PR: \\$(gh pr view --json url)\"\nEOF",
+		"cat <<< 'gh pr view'",
 		`git commit -m "$(cat <<'MSG'\nFix handling of unmatched ( and don't\nMSG\n)" && git push origin HEAD:swarm/${RUN}`,
 		`for i in 1 2 3; do git pull --rebase origin swarm/${RUN} && git push origin HEAD:swarm/${RUN} && break; done`,
 	])('allows %s', async (command) => {

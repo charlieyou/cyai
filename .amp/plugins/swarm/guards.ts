@@ -73,12 +73,14 @@ function scan(src: string, start: number, inSubstitution: boolean): { commands: 
 	let words: string[] = []
 	let word: string | null = null
 	let quoted = false // the current word contains quoting (a quoted here-doc delimiter means a literal body)
-	let target: 'file' | 'heredoc' | null = null // what the next word is, after a redirection
+	const herestrings: string[] = [] // <<< payloads of the current command
+	let target: 'file' | 'heredoc' | 'herestring' | null = null // what the next word is, after a redirection
 	let depth = 0 // open ( subshells
 	const add = (text: string) => (word = (word ?? '') + text)
 	const endWord = () => {
 		if (word === null) return
-		if (target === 'heredoc') heredocs.push({ delim: word.replace(/^-/, ''), quoted, words })
+		if (target === 'heredoc') heredocs.push({ delim: word, quoted, words })
+		else if (target === 'herestring') herestrings.push(word)
 		else if (!target) words.push(word)
 		target = null
 		word = null
@@ -88,6 +90,8 @@ function scan(src: string, start: number, inSubstitution: boolean): { commands: 
 		endWord()
 		target = null
 		if (words.length) commands.push(words)
+		// `bash <<< 'cmd'` runs its payload; the payload of any other command is data.
+		for (const text of herestrings.splice(0)) if (SHELLS.has(consumerOf(words))) commands.push(...simpleCommands(text))
 		words = []
 	}
 	const substitution = (from: number) => {
@@ -133,8 +137,9 @@ function scan(src: string, start: number, inSubstitution: boolean): { commands: 
 			endWord()
 			let op = c
 			while ('<>&'.includes(src[i + 1] ?? '_')) op += src[++i]
+			if (op === '<<' && src[i + 1] === '-') i++ // <<- only strips leading tabs, which the delimiter match always does
 			if (op.endsWith('&')) while (/[\d-]/.test(src[i + 1] ?? '')) i++ // 2>&1, >&-: no target
-			else target = op === '<<' ? 'heredoc' : 'file'
+			else target = op === '<<' ? 'heredoc' : op === '<<<' ? 'herestring' : 'file'
 		} else if (c === '\n') {
 			endCommand()
 			let pos = i + 1
@@ -150,10 +155,11 @@ function scan(src: string, start: number, inSubstitution: boolean): { commands: 
 					if (atDelimiter) break
 				}
 				const body = src.slice(bodyStart, bodyEnd)
-				const consumer = basename(commandWords(doc.words)[0] ?? '')
-				// Two stages: this shell expands an unquoted body, then a consuming shell runs it.
+				// Two stages: this shell expands an unquoted body (removing \ before $ ` \ and newline),
+				// then a consuming shell runs the result.
 				if (!doc.quoted) commands.push(...substitutions(body))
-				if (SHELLS.has(consumer)) commands.push(...simpleCommands(body))
+				const expanded = doc.quoted ? body : body.replace(/\\([$`\\\n])/g, (_, ch) => (ch === '\n' ? '' : ch))
+				if (SHELLS.has(consumerOf(doc.words))) commands.push(...simpleCommands(expanded))
 			}
 			i = pos - 1
 		} else if (c === '(') {
@@ -214,6 +220,7 @@ function commandWords(words: string[]): string[] {
 	return words.slice(i)
 }
 
+const consumerOf = (words: string[]) => basename(commandWords(words)[0] ?? '')
 const basename = (word: string) => word.slice(word.lastIndexOf('/') + 1)
 
 function shellViolation(command: string, self: SwarmSelf | null): string | null {
