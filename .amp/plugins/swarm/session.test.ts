@@ -41,6 +41,7 @@ const self = (role: SwarmSelf['role'], thread: SwarmSelf['thread'], parent: Swar
 	deadlineMin: 90,
 	branch: BRANCH,
 	title: 't',
+	budget: 0,
 })
 
 describe('ensureRunBranch', async () => {

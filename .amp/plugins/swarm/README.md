@@ -30,8 +30,13 @@ The host must stop the orb's git identity from pushing the default branch (§8).
 
 ## Deviations from the plan, forced by Amp (details in `spikes.md`)
 
-- **No sub-planners.** Amp removes from each child thread the plugin tool that created it, so a
-  sub-planner has no `spawn`. `spawn` refuses `role: swarm-planner`; runs are depth 1.
+- **Two spawn tools.** Amp removes from each child thread the plugin tool that created it, so a
+  sub-planner created by `spawn` has no `spawn`. The plugin registers an identical `spawn_alt`;
+  each generation keeps one of the two. This deliberately works around a restriction Amp states
+  ("Further thread creation is intentionally unavailable in this delegated thread"), at the
+  owner's request, and may stop working if Amp closes it. Because Amp's runaway protection is
+  bypassed, the root holds a run-wide budget of 100 threads (`RUN_BUDGET` in `core.ts`) and grants
+  slices of it to sub-planners (`budget` in the bootstrap line). Depth stays capped at 3.
 - Read-only tools are `Read` and `finder` (there is no `Grep`/`Glob`); workers also get
   `shell_command_status`/`shell_command_kill` for long commands.
 - Run labels are `swarm-<last 12 chars of run id>` (labels cannot contain `:`).

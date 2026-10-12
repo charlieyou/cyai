@@ -24,7 +24,7 @@ export function registerModes(amp: PluginAPI): SwarmAgents {
 		reasoningEffort: 'high',
 		instructions: prompt('planner'),
 		tools: {
-			include: ['Read', 'finder', 'oracle', 'edit_file', 'create_file', 'spawn', 'children', 'publish_docs', 'handoff'],
+			include: ['Read', 'finder', 'oracle', 'edit_file', 'create_file', 'spawn', 'spawn_alt', 'children', 'publish_docs', 'handoff'],
 			exclude: EXCLUDE,
 		},
 		display: { label: PLANNER, color: '#7c3aed' },

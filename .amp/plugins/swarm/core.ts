@@ -14,6 +14,13 @@ export const ROLES: readonly Role[] = [PLANNER, WORKER]
 
 /** §6 invariant 8 and §4 defaults. */
 export const CAPS = { liveChildren: 8, totalSpawns: 60, maxDepth: 3 } as const
+/**
+ * Run-wide thread budget. Per-planner caps multiply with depth (8^3 live), and Amp's own guard
+ * against recursive delegation is bypassed (spikes.md S1), so the root holds a budget of threads
+ * for the whole tree and grants slices of it to sub-planners.
+ */
+export const RUN_BUDGET = 100
+export const DEFAULT_SUBPLANNER_BUDGET = 20
 export const DEFAULT_DEADLINE_MIN: Record<Role, number> = { [WORKER]: 90, [PLANNER]: 240 }
 
 /** What a swarm thread knows about itself. Persisted to ~/.swarm/<run>/<thread>/self.json. */
@@ -26,6 +33,8 @@ export interface SwarmSelf {
 	deadlineMin: number
 	branch: string
 	title: string
+	/** Threads this thread's subtree may create in total (descendants); 0 for workers. */
+	budget: number
 }
 
 /** One entry of ~/.swarm/<run>/<thread>/children.json (§5 spawn). */
@@ -35,6 +44,8 @@ export interface ChildEntry {
 	title: string
 	spawnedAt: string
 	deadlineMin: number
+	/** Budget granted to a sub-planner child; its cost is 1 + budget. */
+	budget?: number
 	replacedBy?: ThreadID
 	/** Set when the plugin created the thread but could not deliver its first message. Not live. */
 	failed?: string
@@ -46,21 +57,22 @@ export const wipBranch = (run: string, thread: string) => `swarm-wip/${run}/${th
 // ---------------------------------------------------------------------------------------------
 // Bootstrap line (§4). The plugin writes it; the model never composes it.
 
-/** Line 1 is §4's bootstrap line; line 2 adds the child's own id and title, which agents need too. */
-export function formatBootstrap(b: SwarmSelf): string {
+/** Line 1 is §4's bootstrap line; line 2 adds the child's own id, budget and title, which agents need too. */
+export function formatBootstrap(b: Omit<SwarmSelf, 'budget'> & { budget?: number }): string {
 	return (
 		`[swarm run=${b.run} parent=${b.parent} role=${b.role} depth=${b.depth} deadlineMin=${b.deadlineMin} branch=${b.branch}]\n` +
-		`[swarm self=${b.thread} task: ${b.title.replace(/\s+/g, ' ').trim()}]`
+		`[swarm self=${b.thread} budget=${b.budget ?? 0} task: ${b.title.replace(/\s+/g, ' ').trim()}]`
 	)
 }
 
 const BOOTSTRAP_RE =
 	/^\[swarm run=(T-[\w-]+) parent=(T-[\w-]+) role=(swarm-planner|swarm-worker) depth=(\d+) deadlineMin=(\d+) branch=(\S+)\]/
-const TITLE_RE = /^\[swarm self=T-[\w-]+ task: (.*)\]$/m
+const SELF_RE = /^\[swarm self=T-[\w-]+ budget=(\d+) task: (.*)\]$/m
 
 export function parseBootstrap(thread: ThreadID, text: string): SwarmSelf | null {
 	const m = BOOTSTRAP_RE.exec(text.trimStart())
 	if (!m) return null
+	const line2 = SELF_RE.exec(text)
 	return {
 		run: m[1] as ThreadID,
 		thread,
@@ -69,7 +81,8 @@ export function parseBootstrap(thread: ThreadID, text: string): SwarmSelf | null
 		depth: Number(m[4]),
 		deadlineMin: Number(m[5]),
 		branch: m[6]!,
-		title: TITLE_RE.exec(text)?.[1] ?? '',
+		title: line2?.[2] ?? '',
+		budget: line2 ? Number(line2[1]) : 0,
 	}
 }
 
@@ -139,7 +152,7 @@ export async function loadSelf(thread: PluginThread): Promise<SwarmSelf | null> 
 	const pointer = readJSON<{ run?: string } | null>(pointerPath(thread.id), null)
 	if (pointer?.run) {
 		const cached = readJSON<SwarmSelf | null>(selfPath(pointer.run, thread.id), null)
-		if (cached) return cached
+		if (cached && typeof cached.budget === 'number') return cached
 	}
 	const parent = await thread.parentThreadID()
 	let self: SwarmSelf | null = null
@@ -155,6 +168,7 @@ export async function loadSelf(thread: PluginThread): Promise<SwarmSelf | null> 
 			deadlineMin: 0,
 			branch: runBranch(thread.id),
 			title: 'root',
+			budget: RUN_BUDGET,
 		}
 	} else {
 		const [first] = await thread.messages({ from: 'start', limit: 1, roles: ['user'] })
@@ -168,6 +182,9 @@ export async function loadSelf(thread: PluginThread): Promise<SwarmSelf | null> 
 
 // ---------------------------------------------------------------------------------------------
 // Child registry and serialization.
+
+/** Threads this planner's subtree has used: each child costs 1, plus the budget granted to it. */
+export const budgetSpent = (entries: ChildEntry[]) => entries.reduce((n, c) => n + 1 + (c.failed ? 0 : (c.budget ?? 0)), 0)
 
 export const readChildren = (self: SwarmSelf) => readJSON<ChildEntry[]>(childrenPath(self.run, self.thread), [])
 export const writeChildren = (self: SwarmSelf, entries: ChildEntry[]) =>

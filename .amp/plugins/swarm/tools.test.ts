@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { type ChildEntry, PLANNER, type Role, WORKER, formatBootstrap, loadSelf, readChildren, writeChildren } from './core'
+import { type ChildEntry, PLANNER, RUN_BUDGET, type Role, WORKER, budgetSpent, formatBootstrap, loadSelf, readChildren, writeChildren } from './core'
 import type { SwarmAgents } from './modes'
 import { registerTools } from './tools'
 
@@ -278,7 +278,7 @@ describe('spawn', () => {
 		expect(first!.opts).toEqual({ parentThreadID: run, executor: 'orb' })
 		expect(first!.fake.labels).toEqual([`swarm-${run.slice(-12)}`])
 		expect(first!.fake.appended[0]).toBe(
-			`[swarm run=${run} parent=${run} role=swarm-worker depth=1 deadlineMin=90 branch=swarm/${run}]\n[swarm self=${first!.fake.thread.id} task: task]\n\nDo the task.`,
+			`[swarm run=${run} parent=${run} role=swarm-worker depth=1 deadlineMin=90 branch=swarm/${run}]\n[swarm self=${first!.fake.thread.id} budget=0 task: task]\n\nDo the task.`,
 		)
 
 		setAppendFails(true)
@@ -302,12 +302,10 @@ describe('spawn', () => {
 		expect(entries).toHaveLength(11)
 	})
 
-	test('total and depth caps; workers cannot spawn; sub-planners are refused', async () => {
-		const { add, call, created } = setup()
+	test('total and depth caps; workers cannot spawn', async () => {
+		const { add, call } = setup()
 		const run = newId()
 		const planner = add(fakeThread(run, PLANNER, null))
-		await expect(spawnWorker(call, planner, { role: PLANNER })).rejects.toThrow(/sub-planners cannot delegate/)
-		expect(created).toHaveLength(0)
 		const self = (await loadSelf(planner.thread))!
 		const spent: ChildEntry[] = Array.from({ length: 60 }, () => ({
 			id: newId(),
@@ -320,15 +318,52 @@ describe('spawn', () => {
 		writeChildren(self, spent)
 		await expect(spawnWorker(call, planner)).rejects.toThrow('cap reached: report remaining scope as blocked in your handoff')
 
-		const boot = (role: Role, depth: number) =>
-			formatBootstrap({ thread: run, run, parent: run, role, depth, deadlineMin: 240, branch: `swarm/${run}`, title: 'slice' }) + '\n\ngo'
+		const boot = (role: Role, depth: number, budget = 10) =>
+			formatBootstrap({ thread: run, run, parent: run, role, depth, deadlineMin: 240, branch: `swarm/${run}`, title: 'slice', budget }) + '\n\ngo'
 		const deep = add(fakeThread(newId(), PLANNER, run, [boot(PLANNER, 3)]))
 		await expect(spawnWorker(call, deep)).rejects.toThrow('cap reached: report remaining scope as blocked in your handoff')
 		const mid = add(fakeThread(newId(), PLANNER, run, [boot(PLANNER, 2)]))
 		expect(await spawnWorker(call, mid)).toContain('depth 3')
+		// A planner at depth 3 could not delegate, so it is never created.
+		await expect(spawnWorker(call, mid, { role: PLANNER, budget: 2 })).rejects.toThrow(/spawn workers for this slice instead/)
 
 		const worker = add(fakeThread(newId(), WORKER, run, [boot(WORKER, 1)]))
 		await expect(spawnWorker(call, worker)).rejects.toThrow(/only available to swarm-planner/)
+	})
+
+	test('sub-planners: both spawn tools work, the budget is granted down and enforced across the tree', async () => {
+		const { add, call, created } = setup()
+		const run = newId()
+		const root = add(fakeThread(run, PLANNER, null))
+
+		// The root holds the run budget; a sub-planner costs 1 + its grant.
+		expect(await call('spawn', root, { role: PLANNER, title: 'slice', instructions: 'Own the slice.', budget: 3 })).toContain(
+			`budget 3); ${RUN_BUDGET - 4} threads left`,
+		)
+		const sub = created[0]!.fake
+		expect(created[0]!.role).toBe(PLANNER)
+		expect(sub.appended[0]).toContain(`budget=3 task: slice]\n[swarm note:`)
+		expect(sub.appended[0]!.endsWith('\n\nOwn the slice.')).toBe(true)
+
+		// The child has its own budget of 3, usable through either tool name.
+		await call('spawn_alt', sub, { role: WORKER, title: 'a', instructions: 'A.' })
+		await call('spawn', sub, { role: WORKER, title: 'b', instructions: 'B.' })
+		await expect(call('spawn_alt', sub, { role: PLANNER, title: 'c', instructions: 'C.', budget: 1 })).rejects.toThrow(
+			/exceeds what you have left/,
+		)
+		await call('spawn_alt', sub, { role: WORKER, title: 'c', instructions: 'C.' })
+		await expect(call('spawn', sub, { role: WORKER, title: 'd', instructions: 'D.' })).rejects.toThrow(
+			'cap reached: report remaining scope as blocked in your handoff',
+		)
+		expect(await call('children', sub)).toContain('budget 0 of 3 threads left')
+
+		// Replacing a sub-planner grants a fresh budget: the old subtree may already have used its own.
+		const rootSelf = (await loadSelf(root.thread))!
+		await call('spawn', root, { role: PLANNER, title: 'slice', instructions: 'Own the slice.', budget: 3, replaces: sub.thread.id })
+		expect(budgetSpent(readChildren(rootSelf))).toBe(8)
+		await expect(call('spawn', root, { role: PLANNER, title: 'big', instructions: 'x', budget: RUN_BUDGET })).rejects.toThrow(
+			`(${RUN_BUDGET - 9} for a sub-planner)`,
+		)
 	})
 })
 
