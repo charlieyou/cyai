@@ -31,7 +31,7 @@ export function registerModes(amp: PluginAPI): SwarmAgents {
 	})
 	const worker = amp.createAgent({
 		name: WORKER,
-		model: 'openai/gpt-6-luna',
+		model: 'openai/gpt-6.1-sol',
 		reasoningEffort: 'medium',
 		instructions: prompt('worker'),
 		tools: {
