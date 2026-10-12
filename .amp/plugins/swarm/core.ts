@@ -46,16 +46,17 @@ export const wipBranch = (run: string, thread: string) => `swarm-wip/${run}/${th
 // ---------------------------------------------------------------------------------------------
 // Bootstrap line (§4). The plugin writes it; the model never composes it.
 
-export function formatBootstrap(b: Omit<SwarmSelf, 'thread'>): string {
+/** Line 1 is §4's bootstrap line; line 2 adds the child's own id and title, which agents need too. */
+export function formatBootstrap(b: SwarmSelf): string {
 	return (
 		`[swarm run=${b.run} parent=${b.parent} role=${b.role} depth=${b.depth} deadlineMin=${b.deadlineMin} branch=${b.branch}]\n` +
-		`[swarm task: ${b.title.replace(/\s+/g, ' ').trim()}]`
+		`[swarm self=${b.thread} task: ${b.title.replace(/\s+/g, ' ').trim()}]`
 	)
 }
 
 const BOOTSTRAP_RE =
 	/^\[swarm run=(T-[\w-]+) parent=(T-[\w-]+) role=(swarm-planner|swarm-worker) depth=(\d+) deadlineMin=(\d+) branch=(\S+)\]/
-const TITLE_RE = /^\[swarm task: (.*)\]$/m
+const TITLE_RE = /^\[swarm self=T-[\w-]+ task: (.*)\]$/m
 
 export function parseBootstrap(thread: ThreadID, text: string): SwarmSelf | null {
 	const m = BOOTSTRAP_RE.exec(text.trimStart())
@@ -234,11 +235,11 @@ export async function operationInProgress(root: string): Promise<boolean> {
 }
 
 export async function conflictedFiles(root: string): Promise<string[]> {
-	const r = await git(root, 'diff', '--name-only', '--diff-filter=U')
-	return r.stdout.split('\n').filter(Boolean)
+	const r = await git(root, 'diff', '--name-only', '-z', '--diff-filter=U')
+	return r.stdout.split('\0').filter(Boolean)
 }
 
-/** Files under `paths` (relative to root) that still contain conflict markers. */
+/** Files under `paths` (real paths relative to root, e.g. from `-z` listings) that still contain conflict markers. */
 export async function filesWithMarkers(root: string, paths: string[]): Promise<string[]> {
 	const out: string[] = []
 	for (const p of paths) {

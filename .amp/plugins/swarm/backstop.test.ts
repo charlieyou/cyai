@@ -25,7 +25,7 @@ function fakeThread(role: string, parent: string | null = PARENT) {
 				content: [
 					{
 						type: 'text',
-						text: formatBootstrap({ run: RUN, parent: parent as any, role: role as any, depth: 1, deadlineMin: 90, branch: runBranch(RUN), title: 'Add parser' }),
+						text: formatBootstrap({ thread: RUN, run: RUN, parent: parent as any, role: role as any, depth: 1, deadlineMin: 90, branch: runBranch(RUN), title: 'Add parser' }),
 					},
 				],
 			},

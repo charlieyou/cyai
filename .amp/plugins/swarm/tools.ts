@@ -10,6 +10,7 @@ import {
 	ROLES,
 	type Role,
 	type SwarmSelf,
+	conflictedFiles as unmerged,
 	filesWithMarkers,
 	firstLine,
 	formatBootstrap,
@@ -81,7 +82,6 @@ const isLive = (c: ChildEntry, handed: Set<string>) => !c.replacedBy && !c.faile
 async function paths(root: string, cmd: string, ...args: string[]): Promise<string[]> {
 	return (await git(root, cmd, '-z', ...args)).stdout.split('\0').filter(Boolean)
 }
-const unmerged = (root: string) => paths(root, 'diff', '--name-only', '--diff-filter=U')
 
 /** Files changed in the work tree or index under docs/, relative to HEAD, plus untracked ones. */
 async function changedDocs(root: string): Promise<string[]> {
@@ -161,6 +161,7 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 					notes.push(`labeling failed: ${e instanceof Error ? e.message : e}`)
 				}
 				const bootstrap = formatBootstrap({
+					thread: child.id,
 					run: self.run,
 					parent: self.thread,
 					role,
@@ -242,7 +243,9 @@ export function registerTools(amp: PluginAPI, agents: SwarmAgents): void {
 					}
 				}),
 			)
+			const who = self.parent ? `sub-planner, depth ${self.depth}, parent ${self.parent}` : 'root'
 			return [
+				`you: ${self.thread} (${who}); run ${self.run}; branch ${self.branch}`,
 				refresh,
 				...(scanError ? [`handoff scan: failed (${scanError}); using recorded handoffs only`] : []),
 				JSON.stringify(statuses, null, 2),

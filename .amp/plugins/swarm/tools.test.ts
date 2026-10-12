@@ -181,8 +181,8 @@ describe('publish_docs', () => {
 		expect(readFileSync(join(root, file), 'utf8')).toContain('<<<<<<<')
 
 		const kids = await call('children', planner)
-		expect(kids.split('\n')[0]).toBe(`refresh: blocked (${file})`)
-		const statuses = JSON.parse(kids.slice(kids.indexOf('\n') + 1)) as Record<string, unknown>[]
+		expect(kids.split('\n')[1]).toBe(`refresh: blocked (${file})`)
+		const statuses = JSON.parse(kids.split('\n').slice(2).join('\n')) as Record<string, unknown>[]
 		expect(statuses.map((s) => [s.handoffReceived, s.overdue])).toEqual([
 			[true, false],
 			[false, true],
@@ -199,7 +199,7 @@ describe('publish_docs', () => {
 		expect(await call('publish_docs', planner)).toContain('published')
 		expect(sh(repos.origin, 'show', `${repos.branch}:${file}`)).toBe('- cache: memcached (supersedes redis)')
 		expect(sh(repos.origin, 'log', '--format=%s', repos.branch)).toContain('other decision')
-		expect((await call('children', planner)).split('\n')[0]).toBe('refresh: ok')
+		expect((await call('children', planner)).split('\n')[1]).toBe('refresh: ok')
 	})
 
 	test('children() reports blocked when its autostash restore conflicts; publish_docs refuses markers, then lands', async () => {
@@ -217,8 +217,8 @@ describe('publish_docs', () => {
 		write(root, file, '# Decisions\n\n- storage: postgres\n') // unpublished edit
 
 		const kids = await call('children', planner)
-		expect(kids.split('\n')[0]).toBe(`refresh: blocked (${file})`)
-		expect(JSON.parse(kids.slice(kids.indexOf('\n') + 1))).toEqual([])
+		expect(kids.split('\n')[1]).toBe(`refresh: blocked (${file})`)
+		expect(JSON.parse(kids.split('\n').slice(2).join('\n'))).toEqual([])
 		expect(await call('publish_docs', planner)).toContain(`- ${file}`)
 		expect(sh(repos.origin, 'show', `${repos.branch}:${file}`)).toContain('sqlite')
 
@@ -265,7 +265,7 @@ describe('spawn', () => {
 		expect(first!.opts).toEqual({ parentThreadID: run, executor: 'orb' })
 		expect(first!.fake.labels).toEqual([`swarm-${run.slice(-12)}`])
 		expect(first!.fake.appended[0]).toBe(
-			`[swarm run=${run} parent=${run} role=swarm-worker depth=1 deadlineMin=90 branch=swarm/${run}]\n[swarm task: task]\n\nDo the task.`,
+			`[swarm run=${run} parent=${run} role=swarm-worker depth=1 deadlineMin=90 branch=swarm/${run}]\n[swarm self=${first!.fake.thread.id} task: task]\n\nDo the task.`,
 		)
 
 		setAppendFails(true)
@@ -306,7 +306,7 @@ describe('spawn', () => {
 		await expect(spawnWorker(call, planner)).rejects.toThrow('cap reached: report remaining scope as blocked in your handoff')
 
 		const boot = (role: Role, depth: number) =>
-			formatBootstrap({ run, parent: run, role, depth, deadlineMin: 240, branch: `swarm/${run}`, title: 'slice' }) + '\n\ngo'
+			formatBootstrap({ thread: run, run, parent: run, role, depth, deadlineMin: 240, branch: `swarm/${run}`, title: 'slice' }) + '\n\ngo'
 		const deep = add(fakeThread(newId(), PLANNER, run, [boot(PLANNER, 3)]))
 		await expect(spawnWorker(call, deep)).rejects.toThrow('cap reached: report remaining scope as blocked in your handoff')
 		const mid = add(fakeThread(newId(), PLANNER, run, [boot(PLANNER, 2)]))
@@ -325,7 +325,7 @@ describe('handoff', () => {
 		await expect(call('handoff', root, { report: 'done' })).rejects.toThrow(
 			'you are the root; report to the human in your final message',
 		)
-		const boot = formatBootstrap({ run, parent: run, role: WORKER, depth: 1, deadlineMin: 90, branch: `swarm/${run}`, title: 'Add parser' })
+		const boot = formatBootstrap({ thread: run, run, parent: run, role: WORKER, depth: 1, deadlineMin: 90, branch: `swarm/${run}`, title: 'Add parser' })
 		const worker = add(fakeThread(newId(), WORKER, run, [boot + '\n\nDo it.']))
 		await call('handoff', worker, { report: 'pushed abc123' })
 		expect(root.appended).toEqual([`[handoff from ${worker.thread.id} (swarm-worker): Add parser]\npushed abc123`])

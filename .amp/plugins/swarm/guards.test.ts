@@ -30,7 +30,7 @@ function fakeThread(role: string | null, id = `T-test${++seq}-0000`) {
 							content: [
 								{
 									type: 'text',
-									text: formatBootstrap({ run: RUN, parent: RUN, role: WORKER, depth: 1, deadlineMin: 90, branch: runBranch(RUN), title: 't' }),
+									text: formatBootstrap({ thread: RUN, run: RUN, parent: RUN, role: WORKER, depth: 1, deadlineMin: 90, branch: runBranch(RUN), title: 't' }),
 								},
 							],
 						},
