@@ -1,0 +1,58 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "amp-thread-launcher",
+  "title": "Amp",
+  "description": "Start Amp threads on a runner or in an orb with your chosen mode and project.",
+  "icon": "icon.png",
+  "author": "charlieyou",
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "new-thread",
+      "title": "Start Amp Thread",
+      "description": "Submit a prompt to Amp with a runner, project, and agent mode.",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "apiKey",
+      "title": "Amp API Key",
+      "description": "Optional if already signed in to Amp on this Mac. Otherwise, enter an access token from ampcode.com/settings/security.",
+      "type": "password",
+      "required": false
+    },
+    {
+      "name": "defaultRunnerId",
+      "title": "Default Runner ID",
+      "description": "Runner ID from Amp. You can override it for each thread.",
+      "type": "textfield",
+      "required": false
+    }
+  ],
+  "scripts": {
+    "build:worker": "node scripts/build-worker.mjs",
+    "predev": "npm run build:worker",
+    "dev": "ray develop",
+    "prebuild": "npm run build:worker",
+    "build": "ray build -e dist",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build:worker",
+    "test": "tsx --test src/*.test.ts",
+    "format": "prettier --write src package.json tsconfig.json"
+  },
+  "dependencies": {
+    "@ampcode/cli": "0.0.1792065649-g5a30fc",
+    "@ampcode/sdk": "0.1.0-20260918210405-g81edbf0",
+    "@raycast/api": "1.104.25",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "esbuild": "^0.28.2",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
