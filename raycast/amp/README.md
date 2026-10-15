@@ -24,7 +24,7 @@ A prompt is required because `threads.new()` only supports visibility. The curre
 
 ## Launch lifecycle
 
-The SDK streams a remote turn until it ends. A detached Node worker keeps this stream alive independently of Raycast. It publishes the thread ID as soon as Amp returns it, and Raycast opens that thread while the worker continues. Keep Raycast open until the link arrives if you want the browser to open automatically.
+The SDK streams a remote turn until it ends. A detached Node worker keeps this stream alive independently of Raycast. When Amp returns the thread ID, the worker opens the thread in your default browser, even if you have closed Raycast. While open, Raycast shows a launch confirmation and actions to open or copy the link. Unchanged status polls do not trigger a render.
 
 Launch requests and status files live in Raycast's extension support directory with owner-only permissions. The worker deletes each request, including its prompt, as soon as it reads it. Status files retain the thread ID or error for diagnostics. A failure after creation does not automatically retry or create a second thread.
 

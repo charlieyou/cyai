@@ -7,7 +7,6 @@ import {
   getPreferenceValues,
   environment,
   LocalStorage,
-  open,
   showToast,
   Toast,
 } from "@raycast/api";
@@ -127,26 +126,31 @@ export default function Command() {
   useEffect(() => {
     if (!statusPath) return;
     let disposed = false;
+    let previousStatus: string | undefined;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const next: LaunchStatus = JSON.parse(
-          await readFile(statusPath!, "utf8"),
-        );
+        const serialized = await readFile(statusPath!, "utf8");
         if (disposed) return;
+        if (serialized === previousStatus) {
+          timer = setTimeout(poll, 500);
+          return;
+        }
+        previousStatus = serialized;
+        const next: LaunchStatus = JSON.parse(serialized);
         setStatus(next);
         if ("threadId" in next && next.threadId && !opened.current) {
           opened.current = true;
           setBusy(false);
-          try {
-            await open(`https://ampcode.com/threads/${next.threadId}`);
-          } catch {
-            await showToast({
-              style: Toast.Style.Failure,
-              title: "Thread created; browser did not open",
-              message: "Use Open Thread or Copy Link below.",
-            });
-          }
+          await showToast({
+            style: next.browserError
+              ? Toast.Style.Failure
+              : Toast.Style.Success,
+            title: next.browserError
+              ? "Thread created; browser did not open"
+              : "Amp thread launched",
+            message: next.browserError,
+          });
         }
         if (next.state === "error") {
           setBusy(false);

@@ -64,7 +64,8 @@ export function buildRequest(values: Values, cwd: string) {
   return { prompt: values.prompt, options };
 }
 
-export type LaunchStatus =
+export type LaunchStatus = (
   | { state: "starting" }
   | { state: "running" | "complete"; threadId: string }
-  | { state: "error"; message: string; threadId?: string };
+  | { state: "error"; message: string; threadId?: string }
+) & { browserError?: string };

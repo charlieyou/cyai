@@ -113,6 +113,7 @@ writeFileSync(process.env.CAPTURE_PATH, JSON.stringify({ args: process.argv.slic
 const session_id = 'T-12345678-1234-1234-1234-123456789abc';
 if (process.env.FAIL_BEFORE_INIT) { console.error('Runner is offline'); process.exit(1); }
 console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id, cwd: '/srv/project with spaces', tools: [], mcp_servers: [] }));
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id, cwd: '/srv/project with spaces', tools: [], mcp_servers: [] }));
 setTimeout(() => {
   console.log(JSON.stringify(process.env.FAIL_AFTER_INIT
     ? { type: 'result', subtype: 'error_during_execution', session_id, is_error: true, error: 'Remote task failed' }
@@ -121,10 +122,12 @@ setTimeout(() => {
 `;
 
 for (const { failure, selection } of [
-  ...["", "FAIL_BEFORE_INIT", "FAIL_AFTER_INIT"].map((failure) => ({
-    failure,
-    selection: values,
-  })),
+  ...["", "FAIL_BEFORE_INIT", "FAIL_AFTER_INIT", "FAIL_OPEN"].map(
+    (failure) => ({
+      failure,
+      selection: values,
+    }),
+  ),
   ...["team/app", ""].map((project) => ({
     failure: "",
     selection: { ...values, executor: "orb" as const, mode: "medium", project },
@@ -138,6 +141,23 @@ for (const { failure, selection } of [
       const input = join(directory, "request.json");
       const output = join(directory, "status.json");
       const capture = join(directory, "capture.json");
+      const browser = join(directory, "browser.jsonl");
+      const preload = join(directory, "browser-mock.mjs");
+      await writeFile(
+        preload,
+        `
+        import childProcess from 'node:child_process';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { appendFileSync } from 'node:fs';
+        const original = childProcess.execFile;
+        childProcess.execFile = (file, args, options, callback) => {
+          if (file !== '/usr/bin/open') return original(file, args, options, callback);
+          appendFileSync(${JSON.stringify(browser)}, JSON.stringify(args) + '\\n');
+          callback(process.env.FAIL_OPEN ? new Error('Browser unavailable') : null, '', '');
+        };
+        syncBuiltinESMExports();
+      `,
+      );
       await copyFile(join(process.cwd(), "assets/launch-worker.mjs"), worker);
       await writeFile(cli, `#!${process.execPath}\n${fixture}`);
       await chmod(cli, 0o755);
@@ -158,6 +178,9 @@ for (const { failure, selection } of [
         const child = spawn(process.execPath, process.argv.slice(1), { detached: true, stdio: 'ignore' });
         child.unref();
       `,
+          "--",
+          "--import",
+          preload,
           worker,
           input,
           output,
@@ -191,7 +214,7 @@ for (const { failure, selection } of [
         await delay(50);
       }
       assert.ok(final, "Worker must return a status");
-      if (failure) {
+      if (failure && failure !== "FAIL_OPEN") {
         assert.equal(final.state, "error");
         if (final.state === "error") {
           assert.match(
@@ -206,6 +229,9 @@ for (const { failure, selection } of [
         assert.deepEqual(final, {
           state: "complete",
           threadId: "T-12345678-1234-1234-1234-123456789abc",
+          ...(failure === "FAIL_OPEN" && {
+            browserError: "Use Open Thread or Copy Thread Link below.",
+          }),
         });
         assert.ok(
           sawRunning,
@@ -213,6 +239,14 @@ for (const { failure, selection } of [
         );
       }
       await assert.rejects(stat(input), { code: "ENOENT" });
+      if (failure === "FAIL_BEFORE_INIT") {
+        await assert.rejects(stat(browser), { code: "ENOENT" });
+      } else {
+        assert.equal(
+          await readFile(browser, "utf8"),
+          '["https://ampcode.com/threads/T-12345678-1234-1234-1234-123456789abc"]\n',
+        );
+      }
       assert.equal((await stat(output)).mode & 0o777, 0o600);
       const sent = JSON.parse(await readFile(capture, "utf8"));
       assert.equal(sent.prompt, `${values.prompt}\n`);
