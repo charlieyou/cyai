@@ -12,8 +12,12 @@ const rejected = new Set<string>()
 const blocked = new Map<string, () => void>()
 let sequence = 0
 const contexts: PluginToolContext[] = []
+const leases = { acquired: 0, released: 0 }
 plugin({
-	system: { workspaceRoot: new URL('file:///tmp') },
+	system: {
+		workspaceRoot: new URL('file:///tmp'),
+		executor: { async keepAlive() { leases.acquired++; return { unsubscribe() { leases.released++ } } } },
+	},
 	helpers: { filePathFromURI: () => '/tmp' },
 	logger: { log() {} },
 	registerTool(tool: PluginToolDefinition) { tools.set(tool.name, tool) },
@@ -66,6 +70,21 @@ test('batches live stdout, handles split lines and final fragments, isolates std
 	expect(messages(ctx)[1].content).toContain('last')
 	expect(messages(ctx).some(e => e.content.includes('diagnostic"'))).toBe(false)
 	expect((await list(ctx))[0].stderr_tail).toBe('diagnostic')
+})
+
+test('holds one orb keep-alive lease until the last running monitor finishes', async () => {
+	const ctx = context()
+	const before = { ...leases }
+	const first = await start(ctx, 'sleep 30', { persistent: true })
+	await start(ctx, 'sleep 0.2')
+	await until(async () => (await list(ctx)).some((m: { status: string }) => m.status.startsWith('exited')))
+	await Bun.sleep(50)
+	expect(leases.acquired - before.acquired).toBe(1)
+	expect(leases.released - before.released).toBe(0)
+	await call('monitor_stop', ctx, { id: first.id })
+	await until(() => leases.released - before.released === 1)
+	await start(ctx, 'sleep 30', { persistent: true })
+	await until(() => leases.acquired - before.acquired === 2)
 })
 
 test('silent persistent watchers stay silent; stop is idempotent and thread-scoped', async () => {
@@ -211,7 +230,7 @@ for (const shutdown of ['exit', 'SIGTERM', 'SIGKILL'] as const) {
 		const script = `
 import plugin from ${JSON.stringify(join(import.meta.dir, 'index.ts'))};
 let start;
-plugin({ system: { workspaceRoot: null }, logger: { log() {} },
+plugin({ system: { workspaceRoot: null, executor: { keepAlive: () => Promise.reject(new Error('not an orb')) } }, logger: { log() {} },
   registerTool(t) { if (t.name === 'monitor_start') start = t.execute },
   threads: { get(id) { return { id, async appendUserMessage() {} } } }
 });

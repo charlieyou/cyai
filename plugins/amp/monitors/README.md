@@ -33,7 +33,11 @@ Silent watchers make no AI calls. Delivered events can incur normal inference co
 Timeout defaults to 5 minutes, maximum 1 hour. `persistent: true` disables the
 timeout and cannot be combined with `timeout_ms`. Stop on completion of the user's
 goal. Persistent means **plugin-process lifetime**, not durable background automation.
-The plugin does not keep orbs awake or restart watchers after reload, crash, or pause.
+While any monitor is running, the plugin holds an orb keep-alive lease
+(`amp.system.executor.keepAlive()`), so an idle thread's orb does not sleep under it.
+The lease is best effort and consumes orb runtime credits: manual pauses, insufficient
+credits, and provider runtime limits can still pause the orb. Outside orbs it is skipped.
+The plugin does not restart watchers after reload, crash, or pause.
 A guardian inside each monitor's process group watches a control pipe. On stop,
 payload exit, or plugin death (including SIGKILL), pipe EOF triggers TERM followed
 by KILL one second later. It signals its own group, never a potentially reused

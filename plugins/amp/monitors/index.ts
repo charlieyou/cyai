@@ -1,4 +1,4 @@
-import type { PluginAPI, PluginThread } from '@ampcode/plugin'
+import type { PluginAPI, PluginThread, Subscription } from '@ampcode/plugin'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -43,6 +43,17 @@ export default function (amp: PluginAPI) {
 		stderr_tail: m.stderr, delivery_error: m.deliveryError,
 	})
 	const owned = (thread: PluginThread) => [...monitors.values()].filter(m => m.threadID === thread.id)
+	// One orb keep-alive lease while any monitor runs; outside orbs keepAlive rejects and monitors still run.
+	let active = 0
+	let lease: Promise<Subscription | void> | undefined
+	const hold = () => {
+		if (active++ > 0) return
+		lease = amp.system.executor.keepAlive().catch(error => amp.logger.log('Monitor keep-alive unavailable', String(error)))
+	}
+	const release = () => {
+		if (--active > 0) return
+		lease?.then(held => held?.unsubscribe()); lease = undefined
+	}
 
 	amp.registerTool({
 		name: 'monitor_start',
@@ -54,7 +65,7 @@ export default function (amp: PluginAPI) {
 				command: { type: 'string', minLength: 1 },
 				workdir: { type: 'string', description: 'Absolute working directory; defaults to workspace root.' },
 				timeout_ms: { type: 'integer', minimum: 1, maximum: 3600000, description: 'Default 300000 (5 minutes); cannot be combined with persistent.' },
-				persistent: { type: 'boolean', description: 'No timeout; lasts until stopped or plugin/executor ends. Does not keep an orb awake.' },
+				persistent: { type: 'boolean', description: 'No timeout; lasts until stopped or plugin/executor ends. Keeps an orb awake (best effort, uses orb runtime credits) while running.' },
 			},
 			required: ['description', 'command'],
 		},
@@ -92,6 +103,7 @@ export default function (amp: PluginAPI) {
 				status: 'running', stderr: '', stop,
 			}
 			monitors.set(m.id, m)
+			hold()
 			function send(text: string) {
 				queued++
 				delivery = delivery.then(async () => {
@@ -117,7 +129,7 @@ export default function (amp: PluginAPI) {
 			}
 			function stop(reason: string) {
 				if (finished) return
-				finished = true; m.status = reason
+				finished = true; m.status = reason; release()
 				clearTimeout(deadline); clearTimeout(batchTimer)
 				pending = ''; partial = ''
 				closeControl()
@@ -142,7 +154,7 @@ export default function (amp: PluginAPI) {
 				if (finished) return
 				pending += partial; partial = ''; flush()
 				if (finished) return
-				finished = true; m.status = `exited: ${code ?? sig}`
+				finished = true; m.status = `exited: ${code ?? sig}`; release()
 				send(`Monitor ${m.status}. Stderr diagnostics are available through monitor_list.`)
 			})
 			if (!input.persistent) deadline = setTimeout(() => stop('timed out'), Number(timeout))
