@@ -1,0 +1,1 @@
+apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server time rsync >/dev/null; mkdir -p /root/.ssh /run/sshd; chmod 700 /root/.ssh; echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; service ssh start; sleep infinity
